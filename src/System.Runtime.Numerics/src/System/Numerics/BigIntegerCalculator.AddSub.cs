@@ -8,6 +8,8 @@ namespace System.Numerics
 {
     internal static partial class BigIntegerCalculator
     {
+        private static uint highbit = 0x80000000;
+
         public static uint[] Add(uint[] left, uint right)
         {
             Debug.Assert(left != null);
@@ -17,7 +19,8 @@ namespace System.Numerics
             // Thus, we've similar code than below, but there is no loop for
             // processing the 32-bit integer, since it's a single element.
 
-            uint[] bits = new uint[left.Length + 1];
+            int add_bits = left[left.Length - 1] >= highbit ? 1 : 0;
+            uint[] bits = new uint[left.Length + add_bits];
 
             long digit = (long)left[0] + right;
             bits[0] = (uint)digit;
@@ -29,7 +32,11 @@ namespace System.Numerics
                 bits[i] = (uint)digit;
                 carry = digit >> 32;
             }
-            bits[left.Length] = (uint)carry;
+
+            if (add_bits != 0)
+            {
+                bits[left.Length] = (uint)carry;
+            }
 
             return bits;
         }
@@ -44,7 +51,9 @@ namespace System.Numerics
             // Switching to unsafe pointers helps sparing
             // some nasty index calculations...
 
-            uint[] bits = new uint[left.Length + 1];
+            int add_bits = (left[left.Length - 1] >= highbit) || (right[right.Length - 1] >= highbit) ? 1 : 0;
+
+            uint[] bits = new uint[left.Length + add_bits];
 
             fixed (uint* l = left, r = right, b = bits)
             {
@@ -64,7 +73,7 @@ namespace System.Numerics
             Debug.Assert(leftLength >= 0);
             Debug.Assert(rightLength >= 0);
             Debug.Assert(leftLength >= rightLength);
-            Debug.Assert(bitsLength == leftLength + 1);
+            //Debug.Assert(bitsLength == leftLength + 1);
 
             // Executes the "grammar-school" algorithm for computing z = a + b.
             // While calculating z_i = a_i + b_i we take care of overflow:
@@ -80,13 +89,24 @@ namespace System.Numerics
                 bits[i] = (uint)digit;
                 carry = digit >> 32;
             }
-            for (; i < leftLength; i++)
+
+            // carry can fast become 0
+            for (; (i < leftLength) && (carry != 0); i++) 
             {
                 long digit = left[i] + carry;
                 bits[i] = (uint)digit;
                 carry = digit >> 32;
             }
-            bits[i] = (uint)carry;
+
+            for (; (i < leftLength); i++)
+            {
+                bits[i] = left[i];
+            }
+
+            if (carry != 0)
+            {
+                bits[i] = (uint)carry;
+            }
         }
 
         [SecuritySafeCritical]

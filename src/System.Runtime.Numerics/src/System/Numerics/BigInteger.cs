@@ -710,6 +710,7 @@ namespace System.Numerics
         //
         // When possible the uint[] will be packed into  _sign to conserve space
         //
+        // FFF-new: do not create new uint[]
         internal BigInteger(uint[] value, bool negative)
         {
             if (value == null)
@@ -717,10 +718,11 @@ namespace System.Numerics
             Contract.EndContractBlock();
 
             int len;
+            int full_len = value.Length;
 
             // Try to conserve space as much as possible by checking for wasted leading uint[] entries 
             // sometimes the uint[] has leading zeros from bit manipulation operations & and ^
-            for (len = value.Length; len > 0 && value[len - 1] == 0; len--) ;
+            for (len = full_len; len > 0 && value[len - 1] == 0; len--) ;
 
             if (len == 0)
                 this = s_bnZeroInt;
@@ -732,6 +734,11 @@ namespace System.Numerics
                 // Although Int32.MinValue fits in _sign, we represent this case differently for negate
                 if (_sign == Int32.MinValue)
                     this = s_bnMinInt;
+            }
+            else if (len == full_len)
+            {
+                _sign = negative ? -1 : +1;
+                _bits = value;
             }
             else
             {
