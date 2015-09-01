@@ -163,11 +163,18 @@ namespace System.Numerics
             bits[0] = (uint)digit;
             long carry = digit >> 32;
 
-            for (int i = 1; i < left.Length; i++)
+            int i = 1;
+
+            for (; (carry != 0) && (i < left.Length); i++) 
             {
                 digit = left[i] + carry;
                 bits[i] = (uint)digit;
                 carry = digit >> 32;
+            }
+
+            for (; i < left.Length; i++)
+            {
+                bits[i] = left[i];
             }
 
             return bits;
