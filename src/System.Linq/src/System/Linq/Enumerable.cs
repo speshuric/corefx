@@ -979,6 +979,14 @@ namespace System.Linq
             if (comparer == null) comparer = EqualityComparer<TSource>.Default;
             if (first == null) throw Error.ArgumentNull("first");
             if (second == null) throw Error.ArgumentNull("second");
+
+            ICollection<TSource> firstCol = first as ICollection<TSource>;
+            if (firstCol != null)
+            {
+                ICollection<TSource> secondCol = second as ICollection<TSource>;
+                if (secondCol != null && firstCol.Count != secondCol.Count) return false;
+            }
+
             using (IEnumerator<TSource> e1 = first.GetEnumerator())
             using (IEnumerator<TSource> e2 = second.GetEnumerator())
             {
@@ -986,9 +994,8 @@ namespace System.Linq
                 {
                     if (!(e2.MoveNext() && comparer.Equals(e1.Current, e2.Current))) return false;
                 }
-                if (e2.MoveNext()) return false;
+                return !e2.MoveNext();
             }
-            return true;
         }
 
         public static IEnumerable<TSource> AsEnumerable<TSource>(this IEnumerable<TSource> source)
@@ -1436,18 +1443,18 @@ namespace System.Linq
         {
             private readonly int _start;
             private readonly int _end;
-            
+
             public RangeIterator(int start, int count)
             {
                 _start = start;
                 _end = start + count;
             }
-            
+
             public override Iterator<int> Clone()
             {
                 return new RangeIterator(_start, _end - _start);
             }
-            
+
             public override bool MoveNext()
             {
                 switch(state)
@@ -1458,17 +1465,13 @@ namespace System.Linq
                         state = 2;
                         return true;
                     case 2:
-                        if (++current == _end)
-                        {
-                            --current; // Not crucial but maintains compatibility with previous versions. 
-                            break;
-                        }
+                        if (++current == _end) break;
                         return true;
                 }
                 state = -1;
                 return false;
             }
-            
+
             public override void Dispose()
             {
                 state = -1; // Don't reset current
@@ -1514,18 +1517,18 @@ namespace System.Linq
                 current = element;
                 _count = count;
             }
-            
+
             public override Iterator<TResult> Clone()
             {
                 return new RepeatIterator<TResult>(current, _count);
             }
-            
+
             public override void Dispose()
             {
                 // Don't let base Dispose wipe current.
                 state = -1;
             }
-            
+
             public override bool MoveNext()
             {
                 if (state == 1 & _sent != _count)
@@ -1546,7 +1549,7 @@ namespace System.Linq
             {
                 return new WhereEnumerableIterator<TResult>(this, predicate);
             }
-            
+
             public TResult[] ToArray()
             {
                 TResult[] array = new TResult[_count];
@@ -1900,7 +1903,7 @@ namespace System.Linq
                     int? cur = e.Current;
                     int x = cur.GetValueOrDefault();
                     // Do not replace & with &&. The branch prediction cost outweighs the extra operation
-                    // unless nulls either never happen or always happen. 
+                    // unless nulls either never happen or always happen.
                     if (cur.HasValue & x < valueVal)
                     {
                         valueVal = x;
@@ -1945,7 +1948,7 @@ namespace System.Linq
                     long? cur = e.Current;
                     long x = cur.GetValueOrDefault();
                     // Do not replace & with &&. The branch prediction cost outweighs the extra operation
-                    // unless nulls either never happen or always happen. 
+                    // unless nulls either never happen or always happen.
                     if (cur.HasValue & x < valueVal)
                     {
                         valueVal = x;
@@ -1955,7 +1958,7 @@ namespace System.Linq
             }
             return value;
         }
-        
+
         public static float Min(this IEnumerable<float> source)
         {
             if (source == null) throw Error.ArgumentNull("source");
@@ -2250,7 +2253,7 @@ namespace System.Linq
                         int? cur = e.Current;
                         int x = cur.GetValueOrDefault();
                         // Do not replace & with &&. The branch prediction cost outweighs the extra operation
-                        // unless nulls either never happen or always happen. 
+                        // unless nulls either never happen or always happen.
                         if (cur.HasValue & x > valueVal)
                         {
                             valueVal = x;
@@ -2311,7 +2314,7 @@ namespace System.Linq
                         long? cur = e.Current;
                         long x = cur.GetValueOrDefault();
                         // Do not replace & with &&. The branch prediction cost outweighs the extra operation
-                        // unless nulls either never happen or always happen. 
+                        // unless nulls either never happen or always happen.
                         if (cur.HasValue & x > valueVal)
                         {
                             valueVal = x;
@@ -2372,7 +2375,7 @@ namespace System.Linq
                     double? cur = e.Current;
                     double x = cur.GetValueOrDefault();
                     // Do not replace & with &&. The branch prediction cost outweighs the extra operation
-                    // unless nulls either never happen or always happen. 
+                    // unless nulls either never happen or always happen.
                     if (cur.HasValue & x > valueVal)
                     {
                         valueVal = x;
@@ -2428,7 +2431,7 @@ namespace System.Linq
                     float? cur = e.Current;
                     float x = cur.GetValueOrDefault();
                     // Do not replace & with &&. The branch prediction cost outweighs the extra operation
-                    // unless nulls either never happen or always happen. 
+                    // unless nulls either never happen or always happen.
                     if (cur.HasValue & x > valueVal)
                     {
                         valueVal = x;
@@ -2879,7 +2882,7 @@ namespace System.Linq
         /// <summary>
         /// Produce an array of the sequence through an optimized path, if possible.
         /// </summary>
-        /// <returns>The array, or null if an optimized path isn't possible, and default behaviour should be used.</returns>
+        /// <returns>The array, or null if an optimized path isn't possible, and default behavior should be used.</returns>
         TElement[] ToArray();
     }
 
@@ -2978,8 +2981,8 @@ namespace System.Linq
                 } while (g != _lastGrouping);
             }
         }
-        
-        public IGrouping<TKey, TElement>[] ToArray()
+
+        IGrouping<TKey, TElement>[] IArrayProvider<IGrouping<TKey, TElement>>.ToArray()
         {
             IGrouping<TKey, TElement>[] array = new IGrouping<TKey, TElement>[_count];
             int index = 0;
@@ -3185,8 +3188,6 @@ namespace System.Linq
         private int _freeList;
         private IEqualityComparer<TElement> _comparer;
 
-        public Set() : this(null) { }
-
         public Set(IEqualityComparer<TElement> comparer)
         {
             if (comparer == null) comparer = EqualityComparer<TElement>.Default;
@@ -3200,12 +3201,6 @@ namespace System.Linq
         public bool Add(TElement value)
         {
             return !Find(value, true);
-        }
-
-        // Check whether value is in set
-        public bool Contains(TElement value)
-        {
-            return Find(value, false);
         }
 
         // If value is in set, remove it and return true; otherwise return false
@@ -3356,17 +3351,18 @@ namespace System.Linq
         {
             return GetEnumerator();
         }
-        
+
         public IGrouping<TKey, TElement>[] ToArray()
         {
-            return Lookup<TKey, TElement>.Create<TSource>(_source, _keySelector, _elementSelector, _comparer).ToArray();
+            IArrayProvider<IGrouping<TKey, TElement>> lookup = Lookup<TKey, TElement>.Create<TSource>(_source, _keySelector, _elementSelector, _comparer);
+            return lookup.ToArray();
         }
     }
 
     internal abstract class OrderedEnumerable<TElement> : IOrderedEnumerable<TElement>, IArrayProvider<TElement>
     {
         internal IEnumerable<TElement> source;
-        
+
         private int[] SortedMap(Buffer<TElement> buffer)
         {
             return GetEnumerableSorter(null).Sort(buffer.items, buffer.count);
@@ -3381,7 +3377,7 @@ namespace System.Linq
                 for (int i = 0; i < buffer.count; i++) yield return buffer.items[map[i]];
             }
         }
-        
+
         public TElement[] ToArray()
         {
             Buffer<TElement> buffer = new Buffer<TElement>(source);
@@ -3441,7 +3437,7 @@ namespace System.Linq
     {
         internal abstract void ComputeKeys(TElement[] elements, int count);
 
-        internal abstract int CompareKeys(int index1, int index2);
+        internal abstract int CompareAnyKeys(int index1, int index2);
 
         internal int[] Sort(TElement[] elements, int count)
         {
@@ -3450,6 +3446,11 @@ namespace System.Linq
             for (int i = 0; i < count; i++) map[i] = i;
             QuickSort(map, 0, count - 1);
             return map;
+        }
+
+        private int CompareKeys(int index1, int index2)
+        {
+            return index1 == index2 ? 0 : CompareAnyKeys(index1, index2);
         }
 
         private void QuickSort(int[] map, int left, int right)
@@ -3510,13 +3511,13 @@ namespace System.Linq
             if (next != null) next.ComputeKeys(elements, count);
         }
 
-        internal override int CompareKeys(int index1, int index2)
+        internal override int CompareAnyKeys(int index1, int index2)
         {
             int c = comparer.Compare(keys[index1], keys[index2]);
             if (c == 0)
             {
                 if (next == null) return index1 - index2;
-                return next.CompareKeys(index1, index2);
+                return next.CompareAnyKeys(index1, index2);
             }
             // -c will result in a negative value for int.MinValue (-int.MinValue == int.MinValue).
             // Flipping keys earlier is more likely to trigger something strange in a comparer,
@@ -3543,7 +3544,7 @@ namespace System.Linq
                     return;
                 }
             }
-            
+
             items = EnumerableHelpers.ToArray(source, out count);
         }
 
@@ -3557,6 +3558,11 @@ namespace System.Linq
             return arr;
         }
     }
+
+    // NOTE: DO NOT DELETE THE FOLLOWING DEBUG VIEW TYPES.
+    // Although it might be tempting due to them not be referenced anywhere in this library,
+    // Visual Studio currently depends on their existence to enable the "Results" view in 
+    // watch windows.
 
     /// <summary>
     /// This class provides the items view for the Enumerable
@@ -3615,7 +3621,7 @@ namespace System.Linq
         {
             get
             {
-                return Strings.EmptyEnumerable;
+                return SR.EmptyEnumerable;
             }
         }
     }

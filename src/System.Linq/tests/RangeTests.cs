@@ -76,19 +76,19 @@ namespace System.Linq.Tests
         [Fact]
         public void Range_EnumerableAndEnumeratorAreSame()
         {
-            var rangeEnumberable = Enumerable.Range(1, 1);
-            using (var rangeEnumberator = rangeEnumberable.GetEnumerator())
+            var rangeEnumerable = Enumerable.Range(1, 1);
+            using (var rangeEnumerator = rangeEnumerable.GetEnumerator())
             {
-                Assert.Same(rangeEnumberable, rangeEnumberator);
+                Assert.Same(rangeEnumerable, rangeEnumerator);
             }
         }
 
         [Fact]
         public void Range_GetEnumeratorReturnUniqueInstances()
         {
-            var rangeEnumberable = Enumerable.Range(1, 1);
-            using (var enum1 = rangeEnumberable.GetEnumerator())
-            using (var enum2 = rangeEnumberable.GetEnumerator())
+            var rangeEnumerable = Enumerable.Range(1, 1);
+            using (var enum1 = rangeEnumerable.GetEnumerator())
+            using (var enum2 = rangeEnumerable.GetEnumerator())
             {
                 Assert.NotSame(enum1, enum2);
             }
@@ -106,14 +106,14 @@ namespace System.Linq.Tests
             int[] expected = { Int32.MaxValue - 3, Int32.MaxValue - 2, Int32.MaxValue - 1, Int32.MaxValue };
             Assert.Equal(expected, rangeEnumerable);
         }
-        
+
         [Fact]
         public void RepeatedCallsSameResults()
         {
             Assert.Equal(Enumerable.Range(-1, 2), Enumerable.Range(-1, 2));
             Assert.Equal(Enumerable.Range(0, 0), Enumerable.Range(0, 0));
         }
-        
+
         [Fact]
         public void NegativeStart()
         {
@@ -132,19 +132,6 @@ namespace System.Linq.Tests
             int[] expected = { 12, 13, 14, 15, 16, 17 };
 
             Assert.Equal(expected, Enumerable.Range(start, count));
-        }
-        
-        [Fact]
-        public void RangeAsEnumeratorStartsZeroEndsAtLast()
-        {
-            // The behaviour here is not specified, but any change that breaks this is
-            // not strictly non-breaking, and while a dependency on it is perhaps unlikely
-            // such a change should be noted.
-            var ra = Enumerable.Range(4, 3);
-            var asEn = (IEnumerator<int>)ra;
-            Assert.Equal(0, asEn.Current);
-            ra.All(i => i > 0);
-            Assert.Equal(6, asEn.Current);
         }
     }
 }
