@@ -1,18 +1,18 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using Microsoft.Win32;
+using Microsoft.Win32.SafeHandles;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
-using Microsoft.Win32;
-using Microsoft.Win32.SafeHandles;
 using Xunit;
 using System.Text;
 
-namespace System.Diagnostics.ProcessTests
+namespace System.Diagnostics.Tests
 {
     public class ProcessStartInfoTests : ProcessTestBase
     {
@@ -185,70 +185,48 @@ namespace System.Diagnostics.ProcessTests
         [Fact]
         public void TestEnvironmentOfChildProcess()
         {
-            const string UnicodeEnvVar = "TestEnvironmentOfChildProcess";
-            Environment.SetEnvironmentVariable(UnicodeEnvVar, "\x1234\x5678"); // ensure some Unicode characters are in the output
+            const string ItemSeparator = "CAFF9451396B4EEF8A5155A15BDC2080"; // random string that shouldn't be in any env vars; used instead of newline to separate env var strings
+            const string ExtraEnvVar = "TestEnvironmentOfChildProcess_SpecialStuff";
+            Environment.SetEnvironmentVariable(ExtraEnvVar, "\x1234" + Environment.NewLine + "\x5678"); // ensure some Unicode characters and newlines are in the output
             try
             {
-                var expectedEnv = new HashSet<string>();
-                var actualEnv = new HashSet<string>();
+                // Schedule a process to see what env vars it gets.  Have it write out those variables
+                // to its output stream so we can read them.
                 Process p = CreateProcess(() =>
                 {
-                    foreach (DictionaryEntry envVar in Environment.GetEnvironmentVariables())
-                    {
-                        Console.WriteLine(envVar.Key + "=" + envVar.Value);
-                    }
-
+                    Console.Write(string.Join(ItemSeparator, Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().Select(e => e.Key + "=" + e.Value)));
                     return SuccessExitCode;
                 });
                 p.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-
                 p.StartInfo.RedirectStandardOutput = true;
-                p.OutputDataReceived += (s, e) =>
-                {
-                    if (e.Data != null)
-                    {
-                        expectedEnv.Add(e.Data);
-                    }
-                };
-
                 p.Start();
-                p.BeginOutputReadLine();
-
-                foreach (KeyValuePair<string, string> envVar in p.StartInfo.Environment)
-                {
-                    actualEnv.Add(envVar.Key + "=" + envVar.Value);
-                }
-
+                string output = p.StandardOutput.ReadToEnd();
                 Assert.True(p.WaitForExit(WaitInMS));
-                p.WaitForExit(); // This ensures async event handlers are finished processing.
 
-                // Validate against StartInfo.Environment
-                if (!expectedEnv.SetEquals(actualEnv))
-                {
-                    var expected = string.Join(", ", expectedEnv.Except(actualEnv));
-                    var actual = string.Join(", ", actualEnv.Except(expectedEnv));
+                // Parse the env vars from the child process
+                var actualEnv = new HashSet<string>(output.Split(new[] { ItemSeparator }, StringSplitOptions.None));
 
-                    Assert.True(false, string.Format("Expected: {0}{1}Actual: {2}", expected, Environment.NewLine, actual));
-                }
+                // Validate against StartInfo.Environment.
+                var startInfoEnv = new HashSet<string>(p.StartInfo.Environment.Select(e => e.Key + "=" + e.Value));
+                Assert.True(startInfoEnv.SetEquals(actualEnv),
+                    string.Format("Expected: {0}{1}Actual: {2}",
+                        string.Join(", ", startInfoEnv.Except(actualEnv)),
+                        Environment.NewLine,
+                        string.Join(", ", actualEnv.Except(startInfoEnv))));
 
-                // Validate against current process
-                var currentProcEnv = new HashSet<string>();
-                foreach (DictionaryEntry envVar in Environment.GetEnvironmentVariables())
-                {
-                    currentProcEnv.Add(envVar.Key + "=" + envVar.Value);
-                }
-
-                // Profilers / code coverage tools can add own environment variables but we start
-                // child process without them. Thus the set of variables from child process will
-                // compose subset of variables from current process.
-                // But in case if tests running directly through the Xunit runner, sets will be equal
-                // and Assert.ProperSubset will throw. We add null to avoid this.
-                currentProcEnv.Add(null);
-                Assert.ProperSubset(currentProcEnv, actualEnv);
+                // Validate against current process. (Profilers / code coverage tools can add own environment variables 
+                // but we start child process without them. Thus the set of variables from the child process could
+                // be a subset of variables from current process.)
+                var envEnv = new HashSet<string>(Environment.GetEnvironmentVariables().Cast<DictionaryEntry>().Select(e => e.Key + "=" + e.Value));
+                Assert.True(envEnv.IsSupersetOf(actualEnv),
+                    string.Format("Expected: {0}{1}Actual: {2}",
+                        string.Join(", ", envEnv.Except(actualEnv)),
+                        Environment.NewLine,
+                        string.Join(", ", actualEnv.Except(envEnv))));
             }
             finally
             {
-                Environment.SetEnvironmentVariable(UnicodeEnvVar, null);
+                Environment.SetEnvironmentVariable(ExtraEnvVar, null);
             }
         }
 

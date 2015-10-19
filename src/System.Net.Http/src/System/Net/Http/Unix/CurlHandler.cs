@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 
 using CURLAUTH = Interop.libcurl.CURLAUTH;
 using CURLcode = Interop.libcurl.CURLcode;
@@ -58,7 +59,7 @@ namespace System.Net.Http
         private DecompressionMethods _automaticDecompression = HttpHandlerDefaults.DefaultAutomaticDecompression;
         private bool _preAuthenticate = HttpHandlerDefaults.DefaultPreAuthenticate;
         private CredentialCache _credentialCache = null; // protected by LockObject
-        private CookieContainer _cookieContainer = null;
+        private CookieContainer _cookieContainer = new CookieContainer();
         private bool _useCookie = HttpHandlerDefaults.DefaultUseCookies;
         private bool _automaticRedirection = HttpHandlerDefaults.DefaultAutomaticRedirection;
         private int _maxAutomaticRedirections = HttpHandlerDefaults.DefaultMaxAutomaticRedirections;
@@ -100,6 +101,14 @@ namespace System.Net.Http
         }
 
         internal bool SupportsProxy
+        {
+            get
+            {
+                return true;
+            }
+        }
+
+        internal bool SupportsRedirectConfiguration
         {
             get
             {
@@ -223,7 +232,7 @@ namespace System.Net.Http
         {
             get
             {
-                return LazyInitializer.EnsureInitialized(ref _cookieContainer);
+                return _cookieContainer;
             }
 
             set
@@ -255,6 +264,19 @@ namespace System.Net.Http
             }
         }
 
+        /// <summary>
+        ///   <b> UseDefaultCredentials is a no op on Unix </b>
+        /// </summary>
+        internal bool UseDefaultCredentials
+        {
+            get
+            {
+                return false;
+            }
+            set
+            {
+            }
+        }
         #endregion
 
         protected override void Dispose(bool disposing)
@@ -272,14 +294,16 @@ namespace System.Net.Http
                 throw new ArgumentNullException("request", SR.net_http_handler_norequest);
             }
 
-            if ((request.RequestUri.Scheme != UriSchemeHttp) && (request.RequestUri.Scheme != UriSchemeHttps))
+            if (request.RequestUri.Scheme == UriSchemeHttps)
             {
-                throw NotImplemented.ByDesignWithMessage(SR.net_http_client_http_baseaddress_required);
+                if (!s_supportsSSL)
+                {
+                    throw new PlatformNotSupportedException(SR.net_http_unix_https_support_unavailable_libcurl);
+                }
             }
-
-            if (request.RequestUri.Scheme == UriSchemeHttps && !s_supportsSSL)
+            else
             {
-                throw new PlatformNotSupportedException(SR.net_http_unix_https_support_unavailable_libcurl);
+                Debug.Assert(request.RequestUri.Scheme == UriSchemeHttp, "HttpClient expected to validate scheme as http or https.");
             }
 
             if (request.Headers.TransferEncodingChunked.GetValueOrDefault() && (request.Content == null))
@@ -287,8 +311,10 @@ namespace System.Net.Http
                 throw new InvalidOperationException(SR.net_http_chunked_not_allowed_with_empty_content);
             }
 
-            // TODO: Check that SendAsync is not being called again for same request object.
-            //       Probably fix is needed in WinHttpHandler as well
+            if (_useCookie && _cookieContainer == null)
+            {
+                throw new InvalidOperationException(SR.net_http_invalid_cookiecontainer);
+            }
 
             CheckDisposed();
             SetOperationStarted();
@@ -304,29 +330,13 @@ namespace System.Net.Http
             // Create the easy request.  This associates the easy request with this handler and configures
             // it based on the settings configured for the handler.
             var easy = new EasyRequest(this, request, cancellationToken);
-
-            // Submit the easy request to the multi agent.
-            if (request.Content != null)
-            {
-                // If there is request content to be sent, preload the stream
-                // and submit the request to the multi agent.  This is separated
-                // out into a separate async method to avoid associated overheads
-                // in the case where there is no request content stream.
-                return QueueOperationWithRequestContentAsync(easy);
-            }
-            else
-            {
-                // Otherwise, just submit the request.
-                ConfigureAndQueue(easy);
-                return easy.Task;
-            }
-        }
-
-        private void ConfigureAndQueue(EasyRequest easy)
-        {
             try
             {
                 easy.InitializeCurl();
+                if (easy._requestContentStream != null)
+                {
+                    easy._requestContentStream.Run();
+                }
                 _agent.Queue(new MultiAgent.IncomingRequest { Easy = easy, Type = MultiAgent.IncomingRequestType.New });
             }
             catch (Exception exc)
@@ -334,27 +344,7 @@ namespace System.Net.Http
                 easy.FailRequest(exc);
                 easy.Cleanup(); // no active processing remains, so we can cleanup
             }
-        }
-
-        /// <summary>
-        /// Loads the request's request content stream asynchronously and 
-        /// then submits the request to the multi agent.
-        /// </summary>
-        private async Task<HttpResponseMessage> QueueOperationWithRequestContentAsync(EasyRequest easy)
-        {
-            Debug.Assert(easy._requestMessage.Content != null, "Expected request to have non-null request content");
-
-            easy._requestContentStream = await easy._requestMessage.Content.ReadAsStreamAsync().ConfigureAwait(false);
-            if (easy._cancellationToken.IsCancellationRequested)
-            {
-                easy.FailRequest(new OperationCanceledException(easy._cancellationToken));
-                easy.Cleanup(); // no active processing remains, so we can cleanup
-            }
-            else
-            {
-                ConfigureAndQueue(easy);
-            }
-            return await easy.Task.ConfigureAwait(false);
+            return easy.Task;
         }
 
         #region Private methods
@@ -367,19 +357,19 @@ namespace System.Net.Http
             }
         }
 
-        private NetworkCredential GetNetworkCredentials(ICredentials credentials, Uri requestUri)
+        private KeyValuePair<NetworkCredential, ulong> GetNetworkCredentials(ICredentials credentials, Uri requestUri)
         {
             if (_preAuthenticate)
             {
-                NetworkCredential nc = null;
+                KeyValuePair<NetworkCredential, ulong> ncAndScheme;
                 lock (LockObject)
                 {
                     Debug.Assert(_credentialCache != null, "Expected non-null credential cache");
-                    nc = GetCredentials(_credentialCache, requestUri);
+                    ncAndScheme = GetCredentials(_credentialCache, requestUri);
                 }
-                if (nc != null)
+                if (ncAndScheme.Key != null)
                 {
-                    return nc;
+                    return ncAndScheme;
                 }
             }
 
@@ -395,28 +385,77 @@ namespace System.Net.Http
                     if ((authAvail & s_authSchemePriorityOrder[i]) != 0)
                     {
                         Debug.Assert(_credentialCache != null, "Expected non-null credential cache");
-                        _credentialCache.Add(serverUri, s_authenticationSchemes[i], nc);
+                        try
+                        {
+                            _credentialCache.Add(serverUri, s_authenticationSchemes[i], nc);
+                        }
+                        catch(ArgumentException)
+                        {
+                            //Ignore the case of key already present
+                        }
                     }
                 }
             }
         }
 
-		private static NetworkCredential GetCredentials(ICredentials credentials, Uri requestUri)
+        private void AddResponseCookies(Uri serverUri, HttpResponseMessage response)
         {
-            if (credentials == null)
+            if (!_useCookie)
             {
-                return null;
+                return;
             }
 
-            foreach (var authScheme in s_authenticationSchemes)
+            if (response.Headers.Contains(HttpKnownHeaderNames.SetCookie))
             {
-                NetworkCredential networkCredential = credentials.GetCredential(requestUri, authScheme);
-                if (networkCredential != null)
+                IEnumerable<string> cookieHeaders = response.Headers.GetValues(HttpKnownHeaderNames.SetCookie);
+                foreach (var cookieHeader in cookieHeaders)
                 {
-                    return networkCredential;
+                    try
+                    {
+                        _cookieContainer.SetCookies(serverUri, cookieHeader);
+                    }
+                    catch (CookieException e)
+                    {
+                        string msg = string.Format("Malformed cookie: SetCookies Failed with {0}, server: {1}, cookie:{2}",
+                                                   e.Message,
+                                                   serverUri.OriginalString,
+                                                   cookieHeader);
+                        VerboseTrace(msg);
+                    }
                 }
             }
-            return null;
+        }
+
+        private static KeyValuePair<NetworkCredential, ulong> GetCredentials(ICredentials credentials, Uri requestUri)
+        {
+            NetworkCredential nc = null;
+            ulong curlAuthScheme = CURLAUTH.None;
+
+            if (credentials != null)
+            {
+                // we collect all the schemes that are accepted by libcurl for which there is a non-null network credential.
+                // But CurlHandler works under following assumption:
+                //           for a given server, the credentials do not vary across authentication schemes.
+                for (int i=0; i < s_authSchemePriorityOrder.Length; i++)
+                {
+                    NetworkCredential networkCredential = credentials.GetCredential(requestUri, s_authenticationSchemes[i]);
+                    if (networkCredential != null)
+                    {
+                        curlAuthScheme |= s_authSchemePriorityOrder[i];
+                        if (nc == null)
+                        {
+                            nc = networkCredential;
+                        }
+                        else if(!AreEqualNetworkCredentials(nc, networkCredential))
+                        {
+                            throw new PlatformNotSupportedException(SR.net_http_unix_invalid_credential);
+                        }
+                    }
+                }
+            }
+
+            VerboseTrace("curlAuthScheme = " + curlAuthScheme);
+            return new KeyValuePair<NetworkCredential, ulong>(nc, curlAuthScheme); ;
         }
 
         private void CheckDisposed()
@@ -442,7 +481,7 @@ namespace System.Net.Http
             {
                 var inner = new CurlException(error, isMulti: false);
                 VerboseTrace(inner.Message);
-                throw CreateHttpRequestException(inner);
+                throw inner;
             }
         }
 
@@ -465,9 +504,17 @@ namespace System.Net.Http
                         throw new OutOfMemoryException(msg);
                     case CURLMcode.CURLM_INTERNAL_ERROR:
                     default:
-                        throw CreateHttpRequestException(new CurlException(error, msg));
+                        throw new CurlException(error, msg);
                 }
             }
+        }
+
+        private static bool AreEqualNetworkCredentials(NetworkCredential credential1, NetworkCredential credential2)
+        {
+            Debug.Assert(credential1 != null && credential2 != null, "arguments are non-null in network equality check");
+            return credential1.UserName == credential2.UserName &&
+                credential1.Domain == credential2.Domain &&
+                string.Equals(credential1.Password, credential2.Password, StringComparison.Ordinal);
         }
 
         [Conditional(VerboseDebuggingConditional)]
@@ -493,7 +540,7 @@ namespace System.Net.Http
 
             // Create the message and trace it out
             string msg = string.Format("[{0, -30}]{1, -16}: {2}", memberName, ids, text);
-            Interop.libc.printf("%s\n", msg);
+            Interop.Sys.PrintF("%s\n", msg);
         }
 
         [Conditional(VerboseDebuggingConditional)]
@@ -554,17 +601,6 @@ namespace System.Net.Http
                 {
                     response.StatusCode = (HttpStatusCode)statusCode;
 
-                    // For security reasons, we drop the server credential if it is a
-                    // NetworkCredential.  But we allow credentials in a CredentialCache
-                    // since they are specifically tied to URI's.
-                    if ((response.StatusCode == HttpStatusCode.Redirect) && !(state._handler.Credentials is CredentialCache))
-                    {
-                        state.SetCurlOption(CURLoption.CURLOPT_HTTPAUTH, CURLAUTH.None);
-                        state.SetCurlOption(CURLoption.CURLOPT_USERNAME, IntPtr.Zero);
-                        state.SetCurlOption(CURLoption.CURLOPT_PASSWORD, IntPtr.Zero);
-                        state._networkCredential = null;
-                    }
-
                     int codeEndIndex = codeStartIndex + StatusCodeLength;
 
                     int reasonPhraseIndex = codeEndIndex + 1;
@@ -575,6 +611,10 @@ namespace System.Net.Http
                         int reasonPhraseEnd = newLineCharIndex >= 0 ? newLineCharIndex : responseHeaderLength;
                         response.ReasonPhrase = responseHeader.Substring(reasonPhraseIndex, reasonPhraseEnd - reasonPhraseIndex);
                     }
+                    state._isRedirect = state._handler.AutomaticRedirection &&
+                         (response.StatusCode == HttpStatusCode.Redirect ||
+                         response.StatusCode == HttpStatusCode.RedirectKeepVerb ||
+                         response.StatusCode == HttpStatusCode.RedirectMethod) ;
                 }
             }
 
@@ -604,6 +644,41 @@ namespace System.Net.Http
             statusCode = (c100 - '0') * 100 + (c10 - '0') * 10 + (c1 - '0');
 
             return true;
+        }
+
+        private static void HandleRedirectLocationHeader(EasyRequest state, string locationValue)
+        {
+            Debug.Assert(state._isRedirect);
+            Debug.Assert(state._handler.AutomaticRedirection);
+
+            string location = locationValue.Trim();
+            //only for absolute redirects
+            Uri forwardUri;
+            if (Uri.TryCreate(location, UriKind.RelativeOrAbsolute, out forwardUri) && forwardUri.IsAbsoluteUri)
+            {
+                KeyValuePair<NetworkCredential, ulong> ncAndScheme = GetCredentials(state._handler.Credentials as CredentialCache, forwardUri);
+                if (ncAndScheme.Key != null)
+                {
+                    state.SetCredentialsOptions(ncAndScheme);
+                }
+                else
+                {
+                    state.SetCurlOption(CURLoption.CURLOPT_USERNAME, IntPtr.Zero);
+                    state.SetCurlOption(CURLoption.CURLOPT_PASSWORD, IntPtr.Zero);
+                }
+
+                // reset proxy - it is possible that the proxy has different credentials for the new URI
+                state.SetProxyOptions(forwardUri);
+
+                if (state._handler._useCookie)
+                {
+                    // reset cookies.
+                    state.SetCurlOption(CURLoption.CURLOPT_COOKIE, IntPtr.Zero);
+
+                    // set cookies again
+                    state.SetCookieOption(forwardUri);
+                }
+            }
         }
 
         private static void SetChunkedModeForSend(HttpRequestMessage request)

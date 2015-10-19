@@ -286,7 +286,6 @@ namespace System.IO
                 _includeSubdirectories = includeSubdirectories;
                 _notifyFilters = notifyFilters;
                 _cancellationToken = cancellationToken;
-                FileSystemWatcher.CaseSensitive = true;
 
                 // Add a watch for this starting directory.  We keep track of the watch descriptor => directory information
                 // mapping in a dictionary; this is needed in order to be able to determine the containing directory
@@ -681,8 +680,8 @@ namespace System.IO
                                         // that's actually what's needed (otherwise it'd be fine to block indefinitely waiting
                                         // for the next event to arrive).
                                         const int MillisecondsTimeout = 2;
-                                        Interop.libc.PollFlags resultFlags;
-                                        pollResult = Interop.libc.poll(_inotifyHandle.DangerousGetHandle().ToInt32(), Interop.libc.PollFlags.POLLIN, MillisecondsTimeout, out resultFlags);
+                                        Interop.Sys.PollFlags resultFlags;
+                                        pollResult = Interop.Sys.Poll(_inotifyHandle.DangerousGetHandle().ToInt32(), Interop.Sys.PollFlags.POLLIN, MillisecondsTimeout, out resultFlags);
                                     }
                                     finally
                                     {
@@ -763,10 +762,10 @@ namespace System.IO
                         try
                         {
                             _bufferAvailable = (int)SysCall((fd, thisRef, _) => {
-                                long result;
+                                int result;
                                 fixed (byte* buf = thisRef._buffer)
                                 {
-                                    result = (long)Interop.libc.read(fd, buf, (IntPtr)thisRef._buffer.Length);
+                                    result = Interop.Sys.Read(fd, buf, thisRef._buffer.Length);
                                 }
                                 Debug.Assert(result <= thisRef._buffer.Length);
                                 return result;

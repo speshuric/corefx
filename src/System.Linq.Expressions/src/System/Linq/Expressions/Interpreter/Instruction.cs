@@ -36,9 +36,9 @@ namespace System.Linq.Expressions.Interpreter
 
         public abstract int Run(InterpretedFrame frame);
 
-        public virtual string InstructionName
+        public abstract string InstructionName
         {
-            get { return "<Unknown>"; }
+            get;
         }
 
         public override string ToString()
@@ -54,6 +54,15 @@ namespace System.Linq.Expressions.Interpreter
         public virtual object GetDebugCookie(LightCompiler compiler)
         {
             return null;
+        }
+
+        // throws NRE when o is null
+        protected static void NullCheck(object o)
+        {
+            if (o == null)
+            {
+                o.GetType();
+            }
         }
     }
 

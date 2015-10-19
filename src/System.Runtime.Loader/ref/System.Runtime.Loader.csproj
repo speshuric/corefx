@@ -4,6 +4,8 @@
   <PropertyGroup>
     <AssemblyVersion>4.0.0.0</AssemblyVersion>
     <OutputType>Library</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <PackageTargetFramework>dotnet5.1</PackageTargetFramework>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="System.Runtime.Loader.cs" />

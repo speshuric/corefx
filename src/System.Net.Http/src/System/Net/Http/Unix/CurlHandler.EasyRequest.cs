@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 
 using CURLAUTH = Interop.libcurl.CURLAUTH;
 using CURLoption = Interop.libcurl.CURLoption;
+using CurlProtocols = Interop.libcurl.CURLPROTO_Definitions;
 using CURLProxyType = Interop.libcurl.curl_proxytype;
 using SafeCurlHandle = Interop.libcurl.SafeCurlHandle;
 using SafeCurlSlistHandle = Interop.libcurl.SafeCurlSlistHandle;
@@ -26,23 +27,30 @@ namespace System.Net.Http
             internal readonly HttpRequestMessage _requestMessage;
             internal readonly CurlResponseMessage _responseMessage;
             internal readonly CancellationToken _cancellationToken;
+            internal readonly HttpContentAsyncStream _requestContentStream;
 
             internal SafeCurlHandle _easyHandle;
             private SafeCurlSlistHandle _requestHeaders;
 
-            internal Stream _requestContentStream;
             internal NetworkCredential _networkCredential;
 
             internal MultiAgent _associatedMultiAgent;
             internal SendTransferState _sendTransferState;
+            internal bool _isRedirect = false;
 
             public EasyRequest(CurlHandler handler, HttpRequestMessage requestMessage, CancellationToken cancellationToken) :
                 base(TaskCreationOptions.RunContinuationsAsynchronously)
             {
                 _handler = handler;
                 _requestMessage = requestMessage;
-                _responseMessage = new CurlResponseMessage(this);
                 _cancellationToken = cancellationToken;
+
+                if (requestMessage.Content != null)
+                {
+                    _requestContentStream = new HttpContentAsyncStream(requestMessage.Content);
+                }
+
+                _responseMessage = new CurlResponseMessage(this);
             }
 
             /// <summary>
@@ -69,9 +77,9 @@ namespace System.Net.Http
                 SetRedirection();
                 SetVerb();
                 SetDecompressionOptions();
-                SetProxyOptions();
-                SetCredentialsOptions();
-                SetCookieOption();
+                SetProxyOptions(_requestMessage.RequestUri);
+                SetCredentialsOptions(_handler.GetNetworkCredentials(_handler._serverCredentials,_requestMessage.RequestUri));
+                SetCookieOption(_requestMessage.RequestUri);
                 SetRequestHeaders();
             }
 
@@ -94,7 +102,11 @@ namespace System.Net.Http
                 }
                 else
                 {
-                    TrySetException(error as HttpRequestException ?? CreateHttpRequestException(error));
+                    if (error is IOException || error is CurlException || error == null)
+                    {
+                        error = CreateHttpRequestException(error);
+                    }
+                    TrySetException(error);
                 }
                 // There's not much we can reasonably assert here about the result of TrySet*.
                 // It's possible that the task wasn't yet completed (e.g. a failure while initiating the request),
@@ -134,6 +146,7 @@ namespace System.Net.Http
             {
                 VerboseTrace(_requestMessage.RequestUri.AbsoluteUri);
                 SetCurlOption(CURLoption.CURLOPT_URL, _requestMessage.RequestUri.AbsoluteUri);
+                SetCurlOption(CURLoption.CURLOPT_PROTOCOLS, CurlProtocols.CURLPROTO_HTTP | CurlProtocols.CURLPROTO_HTTPS);
             }
 
             [Conditional(VerboseDebuggingConditional)]
@@ -160,6 +173,11 @@ namespace System.Net.Http
 
                 VerboseTrace(_handler._maxAutomaticRedirections.ToString());
                 SetCurlOption(CURLoption.CURLOPT_FOLLOWLOCATION, 1L);
+                long redirectProtocols = string.Equals(_requestMessage.RequestUri.Scheme, UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ?
+                    CurlProtocols.CURLPROTO_HTTPS : // redirect only to another https
+                    CurlProtocols.CURLPROTO_HTTP | CurlProtocols.CURLPROTO_HTTPS; // redirect to http or to https
+                SetCurlOption(CURLoption.CURLOPT_REDIR_PROTOCOLS, redirectProtocols);
+
                 SetCurlOption(CURLoption.CURLOPT_MAXREDIRS, _handler._maxAutomaticRedirections);
             }
 
@@ -209,7 +227,7 @@ namespace System.Net.Http
                 }
             }
 
-            private void SetProxyOptions()
+            internal void SetProxyOptions(Uri requestUri)
             {
                 if (_handler._proxyPolicy == ProxyUsePolicy.DoNotUseProxy)
                 {
@@ -227,14 +245,14 @@ namespace System.Net.Http
 
                 Debug.Assert(_handler.Proxy != null, "proxy is null");
                 Debug.Assert(_handler._proxyPolicy == ProxyUsePolicy.UseCustomProxy, "_proxyPolicy is not UseCustomProxy");
-                if (_handler.Proxy.IsBypassed(_requestMessage.RequestUri))
+                if (_handler.Proxy.IsBypassed(requestUri))
                 {
                     SetCurlOption(CURLoption.CURLOPT_PROXY, string.Empty);
                     VerboseTrace("Bypassed proxy");
                     return;
                 }
 
-                var proxyUri = _handler.Proxy.GetProxy(_requestMessage.RequestUri);
+                var proxyUri = _handler.Proxy.GetProxy(requestUri);
                 if (proxyUri == null)
                 {
                     VerboseTrace("No proxy URI");
@@ -246,7 +264,8 @@ namespace System.Net.Http
                 SetCurlOption(CURLoption.CURLOPT_PROXYPORT, proxyUri.Port);
                 VerboseTrace("Set proxy: " + proxyUri.ToString());
 
-                NetworkCredential credentials = GetCredentials(_handler.Proxy.Credentials, _requestMessage.RequestUri);
+                KeyValuePair<NetworkCredential, ulong> credentialScheme = GetCredentials(_handler.Proxy.Credentials, _requestMessage.RequestUri);
+                NetworkCredential credentials = credentialScheme.Key;
                 if (credentials != null)
                 {
                     if (string.IsNullOrEmpty(credentials.UserName))
@@ -262,20 +281,22 @@ namespace System.Net.Http
                 }
             }
 
-            private void SetCredentialsOptions()
+            internal void SetCredentialsOptions(KeyValuePair<NetworkCredential, ulong> credentialSchemePair)
             {
-                NetworkCredential credentials = _handler.GetNetworkCredentials(_handler._serverCredentials, _requestMessage.RequestUri);
-                if (credentials == null)
+                if (credentialSchemePair.Key == null)
                 {
+                    _networkCredential = null;
                     return;
                 }
 
+                NetworkCredential credentials = credentialSchemePair.Key;
+                ulong authScheme = credentialSchemePair.Value;
                 string userName = string.IsNullOrEmpty(credentials.Domain) ?
                     credentials.UserName :
                     string.Format("{0}\\{1}", credentials.Domain, credentials.UserName);
 
                 SetCurlOption(CURLoption.CURLOPT_USERNAME, userName);
-                SetCurlOption(CURLoption.CURLOPT_HTTPAUTH, CURLAUTH.AuthAny);
+                SetCurlOption(CURLoption.CURLOPT_HTTPAUTH, authScheme);
                 if (credentials.Password != null)
                 {
                     SetCurlOption(CURLoption.CURLOPT_PASSWORD, credentials.Password);
@@ -285,14 +306,14 @@ namespace System.Net.Http
                 VerboseTrace("Set credentials options");
             }
 
-            private void SetCookieOption()
+            internal void SetCookieOption(Uri uri)
             {
                 if (!_handler._useCookie)
                 {
                     return;
                 }
 
-                string cookieValues = _handler.CookieContainer.GetCookieHeader(_requestMessage.RequestUri);
+                string cookieValues = _handler.CookieContainer.GetCookieHeader(uri);
                 if (cookieValues != null)
                 {
                     SetCurlOption(CURLoption.CURLOPT_COOKIE, cookieValues);

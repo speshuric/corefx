@@ -9,17 +9,14 @@
     <AssemblyName>System.IO.FileSystem</AssemblyName>
     <AssemblyVersion>4.0.1.0</AssemblyVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <PackageTargetFramework>dotnet</PackageTargetFramework>
+    <PackageTargetFramework>dotnet5.4</PackageTargetFramework>
     <PackageTargetFramework Condition="'$(TargetsWindows)' == 'true' AND '$(EnableWinRT)' == 'true'">netcore50</PackageTargetFramework>
     <PackageTargetRuntime Condition=" '$(TargetsWindows)' == 'true'">win7</PackageTargetRuntime>
-    <PackageTargetRuntime Condition=" '$(TargetsOSX)' == 'true'">OSX.10.10</PackageTargetRuntime>
-    <PackageTargetRuntime Condition=" '$(TargetsLinux)' == 'true'">Linux</PackageTargetRuntime>
+    <PackageTargetRuntime Condition=" '$(TargetsOSX)' == 'true'">osx.10.10</PackageTargetRuntime>
+    <PackageTargetRuntime Condition=" '$(TargetsLinux)' == 'true'">linux</PackageTargetRuntime>
   </PropertyGroup>
   <PropertyGroup Condition="'$(TargetsUnix)' == 'true'">
     <NoWarn>$(NoWarn);414</NoWarn>
-  </PropertyGroup>
-  <PropertyGroup>
-    <TargetsBSD Condition="'$(TargetsOSX)' == 'true' or '$(TargetsFreeBSD)' == 'true'">true</TargetsBSD>
   </PropertyGroup>
   <!-- Help VS understand available configurations -->
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'FreeBSD_Debug|AnyCPU' " />
@@ -57,6 +54,9 @@
     <Compile Include="$(CommonPath)\System\IO\PathInternal.cs">
       <Link>Common\System\IO\PathInternal.cs</Link>
     </Compile>
+    <Compile Include="$(CommonPath)\System\IO\PathInternal.CaseSensitivity.cs">
+      <Link>Common\System\IO\PathInternal.CaseSensitivity.cs</Link>
+    </Compile>
   </ItemGroup>
   <!-- Windows -->
   <ItemGroup Condition="'$(TargetsWindows)' == 'true'">
@@ -88,9 +88,6 @@
     </Compile>
     <Compile Include="$(CommonPath)\System\IO\PathInternal.Windows.cs">
       <Link>Common\System\IO\PathInternal.Windows.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\System\IO\PathInternal.CaseInsensitive.cs">
-      <Link>Common\System\IO\PathInternal.CaseInsensitive.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\System\IO\Win32Marshal.cs">
       <Link>Common\System\IO\Win32Marshal.cs</Link>
@@ -267,11 +264,11 @@
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Close.cs">
       <Link>Common\Interop\Unix\Interop.Close.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.ftruncate.cs">
-      <Link>Common\Interop\Unix\Interop.ftruncate.cs</Link>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.FTruncate.cs">
+      <Link>Common\Interop\Unix\Interop.FTruncate.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.getcwd.cs">
-      <Link>Common\Interop\Unix\Interop.getcwd.cs</Link>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.GetCwd.cs">
+      <Link>Common\Interop\Unix\Interop.GetCwd.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Open.cs">
       <Link>Common\Interop\Unix\Interop.Open.cs</Link>
@@ -282,26 +279,11 @@
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.MkDir.cs">
       <Link>Common\Interop\Unix\Interop.MkDir.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.pathconf.cs">
-      <Link>Common\Interop\Unix\Interop.pathconf.cs</Link>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.PathConf.cs">
+      <Link>Common\Interop\Unix\Interop.PathConf.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Permissions.cs">
       <Link>Common\Interop\Unix\Interop.Permissions.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.read.cs">
-      <Link>Common\Interop\Unix\Interop.read.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.rename.cs">
-      <Link>Common\Interop\Unix\Interop.rename.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.rmdir.cs">
-      <Link>Common\Interop\Unix\Interop.remove.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.write.cs">
-      <Link>Common\Interop\Unix\Interop.write.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.utime.cs">
-      <Link>Common\Interop\Unix\Interop.utime.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Unlink.cs">
       <Link>Common\Interop\Unix\Interop.Unlink.cs</Link>
@@ -342,49 +324,26 @@
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Link.cs">
       <Link>Common\Interop\Unix\Interop.Link.cs</Link>
     </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.PosixFAdvise.cs">
+      <Link>Common\Interop\Unix\Interop.PosixFAdvise.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Read.cs">
+      <Link>Common\Interop\Unix\Interop.Read.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Rename.cs">
+      <Link>Common\Interop\Unix\Interop.Rename.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.RmDir.cs">
+      <Link>Common\Interop\Unix\Interop.RmDir.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Write.cs">
+      <Link>Common\Interop\Unix\Interop.Write.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.UTime.cs">
+      <Link>Common\Interop\Unix\Interop.UTime.cs</Link>
+    </Compile>
     <Compile Include="$(CommonPath)\Microsoft\Win32\SafeHandles\SafeDirectoryHandle.Unix.cs">
       <Link>Common\Microsoft\Win32\SafeHandles\SafeDirectoryHandle.Unix.cs</Link>
-    </Compile>
-  </ItemGroup>
-  <!-- FreeBSD -->
-  <ItemGroup Condition="'$(TargetsFreeBSD)' == 'true'">
-    <Compile Include="System\IO\UnixFileStream.posix_fadvise.cs" />
-    <Compile Include="$(CommonPath)\System\IO\PathInternal.CaseSensitive.cs">
-      <Link>Common\System\IO\PathInternal.CaseSensitive.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\FreeBSD\libc\Interop.PathConfNames.cs">
-      <Link>Common\Interop\FreeBSD\Interop.PathConfNames.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.posix_fadvise.cs">
-      <Link>Common\Interop\Unix\Interop.posix_fadvise.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\FreeBSD\Interop.Libraries.cs">
-      <Link>Common\Interop\FreeBSD\Interop.Libraries.cs</Link>
-    </Compile>
-  </ItemGroup>
-  <!-- Linux -->
-  <ItemGroup Condition="'$(TargetsLinux)' == 'true'">
-    <Compile Include="System\IO\UnixFileStream.posix_fadvise.cs" />
-    <Compile Include="$(CommonPath)\System\IO\PathInternal.CaseSensitive.cs">
-      <Link>Common\System\IO\PathInternal.CaseSensitive.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Linux\libc\Interop.PathConfNames.cs">
-      <Link>Common\Interop\Linux\Interop.PathConfNames.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\libc\Interop.posix_fadvise.cs">
-      <Link>Common\Interop\Unix\Interop.posix_fadvise.cs</Link>
-    </Compile>
-  </ItemGroup>
-  <!-- OSX -->
-  <ItemGroup Condition="'$(TargetsOSX)' == 'true'">
-    <Compile Include="$(CommonPath)\System\IO\PathInternal.CaseInsensitive.cs">
-      <Link>Common\System\IO\PathInternal.CaseInsensitive.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\OSX\libc\Interop.PathConfNames.cs">
-      <Link>Common\Interop\OSX\Interop.PathConfNames.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\OSX\Interop.Libraries.cs">
-      <Link>Common\Interop\OSX\Interop.Libraries.cs</Link>
     </Compile>
   </ItemGroup>
   <ItemGroup>

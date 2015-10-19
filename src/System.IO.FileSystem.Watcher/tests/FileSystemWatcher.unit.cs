@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Xunit;
 
@@ -180,10 +181,14 @@ public class FileSystemWatcherTests
         watcher.Filter = "abc.dll";
         Assert.Equal("abc.dll", watcher.Filter);
 
-        // expect no change for OrdinalIgnoreCase-equal strings
-        // it's unclear why desktop does this but preserve it for compat        
-        watcher.Filter = "ABC.DLL";
-        Assert.Equal("abc.dll", watcher.Filter);
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || // expect no change for OrdinalIgnoreCase-equal strings
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            // expect no change for OrdinalIgnoreCase-equal strings
+            // it's unclear why desktop does this but preserve it for compat        
+            watcher.Filter = "ABC.DLL";
+            Assert.Equal("abc.dll", watcher.Filter);
+        }
 
         // We can make this setting by first changing to another value then back.
         watcher.Filter = null;
@@ -267,19 +272,19 @@ public class FileSystemWatcherTests
     {
         using (TestFileSystemWatcher watcher = new TestFileSystemWatcher())
         {
-            bool eventOccured = false;
+            bool eventOccurred = false;
             object obj = null;
             FileSystemEventArgs actualArgs = null, expectedArgs = new FileSystemEventArgs(WatcherChangeTypes.Changed, "directory", "file");
 
             watcher.Changed += (o, e) =>
             {
-                eventOccured = true;
+                eventOccurred = true;
                 obj = o;
                 actualArgs = e;
             };
 
             watcher.CallOnChanged(expectedArgs);
-            Assert.True(eventOccured, "Event should be invoked");
+            Assert.True(eventOccurred, "Event should be invoked");
             Assert.Equal(watcher, obj);
             Assert.Equal(expectedArgs, actualArgs);
         }
@@ -290,19 +295,19 @@ public class FileSystemWatcherTests
     {
         using (TestFileSystemWatcher watcher = new TestFileSystemWatcher())
         {
-            bool eventOccured = false;
+            bool eventOccurred = false;
             object obj = null;
             FileSystemEventArgs actualArgs = null, expectedArgs = new FileSystemEventArgs(WatcherChangeTypes.Created, "directory", "file");
 
             watcher.Created += (o, e) =>
             {
-                eventOccured = true;
+                eventOccurred = true;
                 obj = o;
                 actualArgs = e;
             };
 
             watcher.CallOnCreated(expectedArgs);
-            Assert.True(eventOccured, "Event should be invoked");
+            Assert.True(eventOccurred, "Event should be invoked");
             Assert.Equal(watcher, obj);
             Assert.Equal(expectedArgs, actualArgs);
         }
@@ -313,19 +318,19 @@ public class FileSystemWatcherTests
     {
         using (TestFileSystemWatcher watcher = new TestFileSystemWatcher())
         {
-            bool eventOccured = false;
+            bool eventOccurred = false;
             object obj = null;
             FileSystemEventArgs actualArgs = null, expectedArgs = new FileSystemEventArgs(WatcherChangeTypes.Deleted, "directory", "file");
 
             watcher.Deleted += (o, e) =>
             {
-                eventOccured = true;
+                eventOccurred = true;
                 obj = o;
                 actualArgs = e;
             };
 
             watcher.CallOnDeleted(expectedArgs);
-            Assert.True(eventOccured, "Event should be invoked");
+            Assert.True(eventOccurred, "Event should be invoked");
             Assert.Equal(watcher, obj);
             Assert.Equal(expectedArgs, actualArgs);
         }
@@ -336,19 +341,19 @@ public class FileSystemWatcherTests
     {
         using (TestFileSystemWatcher watcher = new TestFileSystemWatcher())
         {
-            bool eventOccured = false;
+            bool eventOccurred = false;
             object obj = null;
             ErrorEventArgs actualArgs = null, expectedArgs = new ErrorEventArgs(new Exception());
 
             watcher.Error += (o, e) =>
             {
-                eventOccured = true;
+                eventOccurred = true;
                 obj = o;
                 actualArgs = e;
             };
 
             watcher.CallOnError(expectedArgs);
-            Assert.True(eventOccured, "Event should be invoked");
+            Assert.True(eventOccurred, "Event should be invoked");
             Assert.Equal(watcher, obj);
             Assert.Equal(expectedArgs, actualArgs);
         }
@@ -359,19 +364,19 @@ public class FileSystemWatcherTests
     {
         using (TestFileSystemWatcher watcher = new TestFileSystemWatcher())
         {
-            bool eventOccured = false;
+            bool eventOccurred = false;
             object obj = null;
             RenamedEventArgs actualArgs = null, expectedArgs = new RenamedEventArgs(WatcherChangeTypes.Renamed, "directory", "file", "oldFile");
 
             watcher.Renamed += (o, e) =>
             {
-                eventOccured = true;
+                eventOccurred = true;
                 obj = o;
                 actualArgs = e;
             };
 
             watcher.CallOnRenamed(expectedArgs);
-            Assert.True(eventOccured, "Event should be invoked");
+            Assert.True(eventOccurred, "Event should be invoked");
             Assert.Equal(watcher, obj);
             Assert.Equal(expectedArgs, actualArgs);
         }
@@ -396,12 +401,15 @@ public class FileSystemWatcherTests
         watcher.Path = currentDir;
         Assert.Equal(currentDir, watcher.Path);
 
-        // expect no change for OrdinalIgnoreCase-equal strings
-        watcher.Path = currentDir.ToUpperInvariant();
-        Assert.Equal(currentDir, watcher.Path);
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows) || // expect no change for OrdinalIgnoreCase-equal strings
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            watcher.Path = currentDir.ToUpperInvariant();
+            Assert.Equal(currentDir, watcher.Path);
 
-        watcher.Path = currentDir.ToLowerInvariant();
-        Assert.Equal(currentDir, watcher.Path);
+            watcher.Path = currentDir.ToLowerInvariant();
+            Assert.Equal(currentDir, watcher.Path);
+        }
 
         // expect a change for same "full-path" but different string path, FSW does not normalize
         string currentDirRelative = currentDir +

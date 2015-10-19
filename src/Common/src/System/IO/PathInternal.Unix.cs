@@ -16,15 +16,7 @@ namespace System.IO
         internal static bool HasIllegalCharacters(string path, bool checkAdditional = false)
         {
             Debug.Assert(path != null);
-
-            foreach (char c in path)
-            {
-                // Same as InvalidPathChars, unrolled here for performance
-                if (c == InvalidPathChar)
-                    return true;
-            }
-
-            return false;
+            return path.IndexOf(InvalidPathChar) >= 0;
         }
 
         internal static int GetRootLength(string path)
@@ -41,13 +33,12 @@ namespace System.IO
             return c == Path.DirectorySeparatorChar;
         }
 
-
         /// <summary>
         /// Returns true if the path is too long
         /// </summary>
         internal static bool IsPathTooLong(string fullPath)
         {
-            return fullPath.Length >= Interop.libc.MaxPath;
+            return fullPath.Length >= Interop.Sys.MaxPath;
         }
 
         /// <summary>
@@ -55,7 +46,7 @@ namespace System.IO
         /// </summary>
         internal static bool IsDirectoryTooLong(string fullPath)
         {
-            return fullPath.Length >= Interop.libc.MaxPath;
+            return fullPath.Length >= Interop.Sys.MaxPath;
         }
     }
 }

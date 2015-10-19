@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using System.Text;
 using Xunit;
 
 public class PathInternal_Windows_Tests
@@ -16,6 +17,10 @@ public class PathInternal_Windows_Tests
     [PlatformSpecific(PlatformID.Windows)]
     public void EnsureExtendedPrefixTest(string path, string expected)
     {
+        StringBuilder sb = new StringBuilder(path);
+        PathInternal.EnsureExtendedPrefix(sb);
+        Assert.Equal(expected, sb.ToString());
+
         Assert.Equal(expected, PathInternal.EnsureExtendedPrefix(path));
     }
 
@@ -41,6 +46,27 @@ public class PathInternal_Windows_Tests
     [PlatformSpecific(PlatformID.Windows)]
     public void IsRelativeTest(string path, bool expected)
     {
+        StringBuilder sb = new StringBuilder(path);
+        Assert.Equal(expected, PathInternal.IsRelative(sb));
+
         Assert.Equal(expected, PathInternal.IsRelative(path));
+    }
+
+    [Theory,
+        InlineData(@"", 0),
+        InlineData(@"  :", 0),
+        InlineData(@"  C:", 2),
+        InlineData(@"   C:\", 3),
+        InlineData(@"C:\", 0),
+        InlineData(@"  ", 0),
+        InlineData(@"  \", 0),
+        InlineData(@"  8:", 0),
+        InlineData(@"    \\", 4),
+        InlineData(@"\\", 0),
+        ]
+    [PlatformSpecific(PlatformID.Windows)]
+    public void PathStartSkipTest(string path, int expected)
+    {
+        Assert.Equal(expected, PathInternal.PathStartSkip(path));
     }
 }
