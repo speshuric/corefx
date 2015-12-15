@@ -1,16 +1,13 @@
 // Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.IO.Compression;
 using System.Net.Security;
 using System.Runtime.InteropServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -60,7 +57,7 @@ namespace System.Net.Http
         private CookieUsePolicy _cookieUsePolicy = CookieUsePolicy.UseInternalCookieStoreOnly;
         private CookieContainer _cookieContainer = null;
 
-        private SslProtocols _sslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12;
+        private SslProtocols _sslProtocols = SecurityProtocol.DefaultSecurityProtocols;
         private Func<
             HttpRequestMessage,
             X509Certificate2,
@@ -186,14 +183,9 @@ namespace System.Net.Http
 
             set
             {
+                SecurityProtocol.ThrowOnNotAllowed(value, allowNone: false);
+
                 CheckDisposedOrStarted();
-
-                SslProtocols allowedSslProtocols = SslProtocols.Tls | SslProtocols.Tls11 | SslProtocols.Tls12;
-                if (value == SslProtocols.None || (value & ~allowedSslProtocols) != 0)
-                {
-                    throw new ArgumentOutOfRangeException("value");
-                }
-
                 _sslProtocols = value;
             }
         }
@@ -748,7 +740,13 @@ namespace System.Net.Http
                             ref optionAssuredNonBlockingTrue,
                             (uint)Marshal.SizeOf<uint>()))
                         {
-                            WinHttpException.ThrowExceptionUsingLastError();
+                            // This option is not available on downlevel Windows versions. While it improves
+                            // performance, we can ignore the error that the option is not available.
+                            int lastError = Marshal.GetLastWin32Error();
+                            if (lastError != Interop.WinHttp.ERROR_WINHTTP_INVALID_OPTION)
+                            {
+                                throw WinHttpException.CreateExceptionUsingError(lastError);
+                            }
                         }
                     }
                 }
@@ -793,12 +791,24 @@ namespace System.Net.Http
                     secureConnection = false;
                 }
 
+                // Try to use the requested version if a known/supported version was explicitly requested.
+                // Otherwise, we simply use winhttp's default.
+                string httpVersion = null;
+                if (state.RequestMessage.Version == HttpVersion.Version10)
+                {
+                    httpVersion = "HTTP/1.0";
+                }
+                else if (state.RequestMessage.Version == HttpVersion.Version11)
+                {
+                    httpVersion = "HTTP/1.1";
+                }
+
                 // Create an HTTP request handle.
                 state.RequestHandle = Interop.WinHttp.WinHttpOpenRequest(
                     connectHandle,
                     state.RequestMessage.Method.Method,
                     state.RequestMessage.RequestUri.PathAndQuery,
-                    null,
+                    httpVersion,
                     Interop.WinHttp.WINHTTP_NO_REFERER,
                     Interop.WinHttp.WINHTTP_DEFAULT_ACCEPT_TYPES,
                     secureConnection ? Interop.WinHttp.WINHTTP_FLAG_SECURE : 0);
@@ -1290,7 +1300,7 @@ namespace System.Net.Http
         
         private Task<bool> InternalSendRequestAsync(WinHttpRequestState state)
         {
-            state.TcsSendRequest = new TaskCompletionSource<bool>();
+            state.TcsSendRequest = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             lock (state.Lock)
             {
@@ -1323,7 +1333,8 @@ namespace System.Net.Http
         
         private Task<bool> InternalReceiveResponseHeadersAsync(WinHttpRequestState state)
         {
-            state.TcsReceiveResponseHeaders = new TaskCompletionSource<bool>();
+            state.TcsReceiveResponseHeaders =
+                new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             
             lock (state.Lock)
             {

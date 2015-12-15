@@ -64,85 +64,21 @@ namespace System.Net
             return retVal;
         }
 
-        public static SafeFreeContextBufferChannelBinding QueryContextChannelBinding(SafeDeleteContext phContext, ChannelBindingKind attribute)
+        public static SafeFreeContextBufferChannelBinding QueryContextChannelBinding(SafeDeleteContext securityContext, ChannelBindingKind attribute)
         {
-            // TODO (Issue #3362) To be implemented
-            throw NotImplemented.ByDesignWithMessage(SR.net_MethodNotImplementedException);
+            SafeChannelBindingHandle bindingHandle = Interop.OpenSsl.QueryChannelBinding(securityContext.SslContext, attribute);
+            var refHandle = bindingHandle == null ? null : new SafeFreeContextBufferChannelBinding(bindingHandle);
+            return refHandle;
         }
 
         public static void QueryContextStreamSizes(SafeDeleteContext securityContext, out StreamSizes streamSizes)
         {
-            streamSizes = null;
-            streamSizes = new StreamSizes(Interop.libssl.SslSizes.HEADER_SIZE, Interop.libssl.SslSizes.TRAILER_SIZE, Interop.libssl.SslSizes.SSL3_RT_MAX_PLAIN_LENGTH);
+            streamSizes = new StreamSizes();
         }
 
-        public static int QueryContextConnectionInfo(SafeDeleteContext securityContext, out SslConnectionInfo connectionInfo)
+        public static void QueryContextConnectionInfo(SafeDeleteContext securityContext, out SslConnectionInfo connectionInfo)
         {
-            string protocolVersion;
-            connectionInfo = null;
-            try
-            {
-                Interop.libssl.SSL_CIPHER cipher = Interop.OpenSsl.GetConnectionInfo(securityContext.SslContext, out protocolVersion);
-                connectionInfo =  new SslConnectionInfo(cipher, protocolVersion);
-               
-                return 0;
-            }
-            catch
-            {
-                return -1;
-            }
-        }
-
-        private static long GetOptions(SslProtocols protocols)
-        {
-            long retVal = Interop.libssl.Options.SSL_OP_NO_SSLv2 | Interop.libssl.Options.SSL_OP_NO_SSLv3 |
-                                Interop.libssl.Options.SSL_OP_NO_TLSv1 | Interop.libssl.Options.SSL_OP_NO_TLSv1_1 |
-                                Interop.libssl.Options.SSL_OP_NO_TLSv1_2;
-
-            if ((protocols & SslProtocols.Ssl2) != 0)
-            {
-                retVal &= ~Interop.libssl.Options.SSL_OP_NO_SSLv2;
-            }
-            if ((protocols & SslProtocols.Ssl3) != 0)
-            {
-                retVal &= ~Interop.libssl.Options.SSL_OP_NO_SSLv3;
-            }
-            if ((protocols & SslProtocols.Tls) != 0)
-            {
-                retVal &= ~Interop.libssl.Options.SSL_OP_NO_TLSv1;
-            }
-            if ((protocols & SslProtocols.Tls11) != 0)
-            {
-                retVal &= ~Interop.libssl.Options.SSL_OP_NO_TLSv1_1;
-            }
-            if ((protocols & SslProtocols.Tls12) != 0)
-            {
-                retVal &= ~Interop.libssl.Options.SSL_OP_NO_TLSv1_2;
-            }
-
-            return retVal;
-        }
-
-        private static string GetCipherString(EncryptionPolicy encryptionPolicy)
-        {
-            string cipherString = null;
-
-            switch (encryptionPolicy)
-            {
-                case EncryptionPolicy.RequireEncryption:
-                    cipherString = Interop.libssl.CipherString.AllExceptNull;
-                    break;
-
-                case EncryptionPolicy.AllowNoEncryption:
-                    cipherString = Interop.libssl.CipherString.AllIncludingNull;
-                    break;
-
-                case EncryptionPolicy.NoEncryption:
-                    cipherString = Interop.libssl.CipherString.Null;
-                    break;
-            }
-
-            return cipherString;
+            connectionInfo = new SslConnectionInfo(securityContext.SslContext);
         }
 
         private static SecurityStatusPal HandshakeInternal(SafeFreeCredentials credential, ref SafeDeleteContext context,
@@ -154,87 +90,58 @@ namespace System.Net
             {
                 if ((null == context) || context.IsInvalid)
                 {
-                    long options = GetOptions(credential.Protocols);
-                    string encryptionPolicy = GetCipherString(credential.Policy);
-                    context = new SafeDeleteContext(credential, options, encryptionPolicy, isServer, remoteCertRequired);
+                    context = new SafeDeleteContext(credential, isServer, remoteCertRequired);
                 }
 
-                IntPtr inputPtr = IntPtr.Zero, outputPtr = IntPtr.Zero;
+                byte[] output = null;
                 int outputSize;
                 bool done;
 
                 if (null == inputBuffer)
                 {
-                    done = Interop.OpenSsl.DoSslHandshake(context.SslContext, inputPtr, 0, out outputPtr, out outputSize);
+                    done = Interop.OpenSsl.DoSslHandshake(context.SslContext, null, 0, 0, out output, out outputSize);
                 }
                 else
                 {
-                    unsafe
-                    {
-                        fixed (byte* tokenPtr = inputBuffer.token)
-                        {
-                            inputPtr = new IntPtr(tokenPtr + inputBuffer.offset);
-                            done = Interop.OpenSsl.DoSslHandshake(context.SslContext, inputPtr, inputBuffer.size, out outputPtr, out outputSize);
-                        }
-                    }
+                    done = Interop.OpenSsl.DoSslHandshake(context.SslContext, inputBuffer.token, inputBuffer.offset, inputBuffer.size, out output, out outputSize);
                 }
 
                 outputBuffer.size = outputSize;
                 outputBuffer.offset = 0;
-                if (outputSize > 0)
-                {
-                    outputBuffer.token = new byte[outputBuffer.size];
-                    Marshal.Copy(outputPtr, outputBuffer.token, 0, outputBuffer.size);
-                }
-                else
-                {
-                    outputBuffer.token = null;
-                }
-
-                if (outputPtr != IntPtr.Zero)
-                {
-                     Marshal.FreeHGlobal(outputPtr);
-                     outputPtr = IntPtr.Zero;
-                }
+                outputBuffer.token = outputSize > 0 ? output : null;
 
                 return done ? SecurityStatusPal.OK : SecurityStatusPal.ContinueNeeded;
             }
-            catch (Exception ex)
+            catch
             {
-                Debug.Fail("Exception Caught. - " + ex);
+                // TODO: This Debug.Fail is triggering on Linux in many test cases #4317
+                // Debug.Fail("Exception Caught. - " + ex);
                 return SecurityStatusPal.InternalError;             
             }
         }
-        
+
         private static SecurityStatusPal EncryptDecryptHelper(SafeDeleteContext securityContext, byte[] buffer, int offset, int size, int headerSize, int trailerSize, bool encrypt, out int resultSize)
         {
             resultSize = 0;
             try
             {
-                Interop.libssl.SslErrorCode errorCode = Interop.libssl.SslErrorCode.SSL_ERROR_NONE;
+                Interop.Ssl.SslErrorCode errorCode = Interop.Ssl.SslErrorCode.SSL_ERROR_NONE;
 
-                unsafe
-                {
-                    fixed (byte* bufferPtr = buffer)
-                    {
-                        IntPtr inputPtr = new IntPtr(bufferPtr);
 
-                        Interop.libssl.SafeSslHandle scHandle = securityContext.SslContext;
+                SafeSslHandle scHandle = securityContext.SslContext;
 
-                        resultSize = encrypt ?
-                            Interop.OpenSsl.Encrypt(scHandle, inputPtr, offset, size, buffer.Length, out errorCode) :
-                            Interop.OpenSsl.Decrypt(scHandle, inputPtr, size, out errorCode);
-                    }
-                }
+                resultSize = encrypt ?
+                    Interop.OpenSsl.Encrypt(scHandle, buffer, offset, size, out errorCode) :
+                    Interop.OpenSsl.Decrypt(scHandle, buffer, size, out errorCode);
 
                 switch (errorCode)
                 {
-                    case Interop.libssl.SslErrorCode.SSL_ERROR_RENEGOTIATE:
+                    case Interop.Ssl.SslErrorCode.SSL_ERROR_RENEGOTIATE:
                         return SecurityStatusPal.Renegotiate;
-                    case Interop.libssl.SslErrorCode.SSL_ERROR_ZERO_RETURN:
+                    case Interop.Ssl.SslErrorCode.SSL_ERROR_ZERO_RETURN:
                         return SecurityStatusPal.ContextExpired;
-                    case Interop.libssl.SslErrorCode.SSL_ERROR_NONE:
-                    case Interop.libssl.SslErrorCode.SSL_ERROR_WANT_READ:
+                    case Interop.Ssl.SslErrorCode.SSL_ERROR_NONE:
+                    case Interop.Ssl.SslErrorCode.SSL_ERROR_WANT_READ:
                         return SecurityStatusPal.OK;
                     default:
                         return SecurityStatusPal.InternalError;

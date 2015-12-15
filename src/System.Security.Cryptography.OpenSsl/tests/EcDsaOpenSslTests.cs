@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System;
 using System.Runtime.InteropServices;
 using Test.Cryptography;
 using Xunit;
@@ -9,6 +10,24 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
 {
     public static class EcDsaOpenSslTests
     {
+        // TODO: Issue #4337.  Temporary workaround for tests to pass on CentOS 
+        // where secp224r1 appears to be disabled. 
+        private static bool ECDsa224Available
+        {
+            get
+            {
+                try
+                {
+                    using (ECDsaOpenSsl e = new ECDsaOpenSsl(224)) e.Exercise();
+                    return true;
+                }
+                catch (Exception exc)
+                {
+                    return !exc.Message.Contains("unknown group");
+                }
+            }
+        }
+
         [Fact]
         public static void DefaultCtor()
         {
@@ -20,7 +39,7 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
             }
         }
 
-        [Fact]
+        [ConditionalFact("ECDsa224Available")] // Issue #4337
         public static void Ctor224()
         {
             int expectedKeySize = 224;
@@ -56,12 +75,12 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
             }
         }
 
-        [Fact]
+        [ConditionalFact("ECDsa224Available")] // Issue #4337
         public static void CtorHandle224()
         {
-            IntPtr ecKey = EC_KEY_new_by_curve_name(NID_secp224r1);
+            IntPtr ecKey = Interop.Crypto.EcKeyCreateByCurveName(NID_secp224r1);
             Assert.NotEqual(IntPtr.Zero, ecKey);
-            int success = EC_KEY_generate_key(ecKey);
+            int success = Interop.Crypto.EcKeyGenerateKey(ecKey);
             Assert.NotEqual(0, success);
 
             using (ECDsaOpenSsl e = new ECDsaOpenSsl(ecKey))
@@ -71,15 +90,15 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
                 e.Exercise();
             }
 
-            EC_KEY_free(ecKey);
+            Interop.Crypto.EcKeyDestroy(ecKey);
         }
 
         [Fact]
         public static void CtorHandle384()
         {
-            IntPtr ecKey = EC_KEY_new_by_curve_name(NID_secp384r1);
+            IntPtr ecKey = Interop.Crypto.EcKeyCreateByCurveName(NID_secp384r1);
             Assert.NotEqual(IntPtr.Zero, ecKey);
-            int success = EC_KEY_generate_key(ecKey);
+            int success = Interop.Crypto.EcKeyGenerateKey(ecKey);
             Assert.NotEqual(0, success);
 
             using (ECDsaOpenSsl e = new ECDsaOpenSsl(ecKey))
@@ -89,15 +108,15 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
                 e.Exercise();
             }
 
-            EC_KEY_free(ecKey);
+            Interop.Crypto.EcKeyDestroy(ecKey);
         }
 
         [Fact]
         public static void CtorHandle521()
         {
-            IntPtr ecKey = EC_KEY_new_by_curve_name(NID_secp521r1);
+            IntPtr ecKey = Interop.Crypto.EcKeyCreateByCurveName(NID_secp521r1);
             Assert.NotEqual(IntPtr.Zero, ecKey);
-            int success = EC_KEY_generate_key(ecKey);
+            int success = Interop.Crypto.EcKeyGenerateKey(ecKey);
             Assert.NotEqual(0, success);
 
             using (ECDsaOpenSsl e = new ECDsaOpenSsl(ecKey))
@@ -107,21 +126,21 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
                 e.Exercise();
             }
 
-            EC_KEY_free(ecKey);
+            Interop.Crypto.EcKeyDestroy(ecKey);
         }
 
         [Fact]
         public static void CtorHandleDuplicate()
         {
-            IntPtr ecKey = EC_KEY_new_by_curve_name(NID_secp521r1);
+            IntPtr ecKey = Interop.Crypto.EcKeyCreateByCurveName(NID_secp521r1);
             Assert.NotEqual(IntPtr.Zero, ecKey);
-            int success = EC_KEY_generate_key(ecKey);
+            int success = Interop.Crypto.EcKeyGenerateKey(ecKey);
             Assert.NotEqual(0, success);
 
             using (ECDsaOpenSsl e = new ECDsaOpenSsl(ecKey))
             {
                 // Make sure ECDsaOpenSsl did his own ref-count bump.
-                EC_KEY_free(ecKey);
+                Interop.Crypto.EcKeyDestroy(ecKey);
 
                 int keySize = e.KeySize;
                 Assert.Equal(521, keySize);
@@ -129,7 +148,7 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
             }
         }
 
-        [Fact]
+        [ConditionalFact("ECDsa224Available")] // Issue #4337
         public static void KeySizeProp()
         {
             using (ECDsaOpenSsl e = new ECDsaOpenSsl())
@@ -251,15 +270,20 @@ namespace System.Security.Cryptography.EcDsaOpenSsl.Tests
         private const int NID_secp224r1 = 713;
         private const int NID_secp384r1 = 715;
         private const int NID_secp521r1 = 716;
-
-        [DllImport("libcrypto")]
-        private static extern IntPtr EC_KEY_new_by_curve_name(int nid);
-
-        [DllImport("libcrypto")]
-        private static extern int EC_KEY_generate_key(IntPtr ecKey);
-
-        [DllImport("libcrypto")]
-        private static extern void EC_KEY_free(IntPtr r);
     }
 }
- 
+
+internal static partial class Interop
+{
+    internal static class Crypto
+    {
+        [DllImport(Libraries.CryptoNative)]
+        internal static extern IntPtr EcKeyCreateByCurveName(int nid);
+
+        [DllImport(Libraries.CryptoNative)]
+        internal static extern int EcKeyGenerateKey(IntPtr ecKey);
+
+        [DllImport(Libraries.CryptoNative)]
+        internal static extern void EcKeyDestroy(IntPtr r);
+    }
+}

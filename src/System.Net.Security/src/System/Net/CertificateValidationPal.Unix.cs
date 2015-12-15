@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Diagnostics;
+using System.Globalization;
 using Microsoft.Win32.SafeHandles;
 using System.Net.Security;
 using System.Security.Cryptography;
@@ -56,7 +57,15 @@ namespace System.Net
                         }
                         else
                         {
-                            hostnameMatch = Interop.Crypto.CheckX509Hostname(certHandle, hostName, hostName.Length);
+                            // The IdnMapping converts Unicode input into the IDNA punycode sequence.
+                            // It also does host case normalization.  The bypass logic would be something
+                            // like "all characters being within [a-z0-9.-]+"
+                            //
+                            // Since it's not documented as being thread safe, create a new one each time.
+                            IdnMapping mapping = new IdnMapping();
+                            string matchName = mapping.GetAscii(hostName);
+
+                            hostnameMatch = Interop.Crypto.CheckX509Hostname(certHandle, matchName, matchName.Length);
                         }
                     }
 
@@ -147,7 +156,7 @@ namespace System.Net
         //
         internal static string[] GetRequestCertificateAuthorities(SafeDeleteContext securityContext)
         {
-            using (SafeSharedX509NameStackHandle names = Interop.libssl.SSL_get_client_CA_list(securityContext.SslContext))
+            using (SafeSharedX509NameStackHandle names = Interop.Ssl.SslGetClientCAList(securityContext.SslContext))
             {
                 if (names.IsInvalid)
                 {
@@ -242,12 +251,6 @@ namespace System.Net
             {
                 return -1;
             }
-        }
-
-        private static int QueryContextIssuerList(SafeDeleteContext securityContext, out Object issuerList)
-        {
-            // TODO (Issue #3362) To be implemented
-            throw NotImplemented.ByDesignWithMessage(SR.net_MethodNotImplementedException);
         }
     }
 }

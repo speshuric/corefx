@@ -6,7 +6,7 @@
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{99794DE7-AC2B-400B-B388-511718375437}</ProjectGuid>
     <OutputType>Library</OutputType>
-    <UnsupportedPlatforms>OSX;FreeBSD</UnsupportedPlatforms>
+    <UnsupportedPlatforms>FreeBSD</UnsupportedPlatforms>
   </PropertyGroup>
   <!-- Help VS understand available configurations -->
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' " />
@@ -18,14 +18,13 @@
     <Compile Include="ArgumentValidationTests.cs" />
     <Compile Include="ConnectAsync.cs" />
     <Compile Include="ConnectExTest.cs" />
-    <Compile Include="Disconnect.cs" />
-    <Compile Include="DisconnectAsync.cs" />
     <Compile Include="DisposedSocketTests.cs" />
     <Compile Include="DnsEndPointTest.cs" />
     <Compile Include="DualModeSocketTest.cs" />
     <Compile Include="LingerStateTest.cs" />
     <Compile Include="ReceiveMessageFrom.cs" />
     <Compile Include="ReceiveMessageFromAsync.cs" />
+    <Compile Include="SelectAndPollTests.cs" />
     <Compile Include="SendPacketsAsync.cs" />
     <Compile Include="SendPacketsElementTest.cs" />
     <Compile Include="TimeoutTest.cs" />
@@ -66,6 +65,14 @@
     </Compile>
     <Compile Include="$(CommonTestPath)\System\Net\Capability.Sockets.cs">
       <Link>Common\System\Net\Capability.Sockets.cs</Link>
+    </Compile>
+    
+    <!-- Sockets APM extensions -->   
+    <Compile Include="$(CommonPath)\System\Net\Sockets\SocketAPMExtensions.cs">
+      <Link>Common\System\Net\Sockets\SocketAPMExtensions.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\System\Threading\Tasks\TaskToApm.cs">
+      <Link>Common\System\Threading\Tasks\TaskToApm.cs</Link>
     </Compile>
   </ItemGroup>
 

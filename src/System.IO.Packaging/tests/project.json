@@ -1,10 +1,6 @@
 {
   "dependencies": {
     "System.Collections": "4.0.10",
-    "System.Console": "4.0.0-beta-*",
-    "System.Diagnostics.Debug": "4.0.10",
-    "System.Globalization": "4.0.10",
-    "System.IO.Compression": "4.0.0",
     "System.IO.FileSystem.Primitives": "4.0.0",
     "System.IO.FileSystem": "4.0.0",
     "System.IO.Packaging.TestData": "1.0.0-prerelease",
@@ -13,7 +9,7 @@
     "System.Xml.ReaderWriter": "4.0.0",
     "System.Xml.XDocument": "4.0.0",
     "xunit": "2.1.0",
-    "xunit.netcore.extensions": "1.0.0-prerelease-*"
+    "xunit.netcore.extensions": "1.0.0-prerelease-00123"
   },
   "frameworks": {
     "dnxcore50": {}

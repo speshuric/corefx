@@ -22,9 +22,11 @@ namespace System.Net.Sockets
         // Send without using routing tables.
         DontRoute = 0x0004,
 
-        // See: http://as400bks.rochester.ibm.com/pubs/html/as400/v4r5/ic2978/info/apis/recvms.htm
-        MaxIOVectorLength = 0x0010,
-
+        // This is defined in the .NET Framework and isn't being ported to CoreFx
+        // since it is Windows specific. However, leave this enum value reserved
+        // to prevent future numbering conflicts.
+        // MaxIOVectorLength = 0x0010
+        
         // Partial send or recv for message.
         Truncated = 0x0100,
         ControlDataTruncated = 0x0200,

@@ -211,12 +211,6 @@ namespace System.Net.Sockets.Tests
         }
 
         [Fact]
-        public void Close_TimeoutLessThanNegativeOne_ArgumentOutOfRange()
-        {
-            Assert.Throws<ArgumentOutOfRangeException>(() => GetSocket().Close(-2));
-        }
-
-        [Fact]
         public void Accept_NotBound_Throws_InvalidOperation()
         {
             Assert.Throws<InvalidOperationException>(() => GetSocket().Accept());
@@ -444,13 +438,7 @@ namespace System.Net.Sockets.Tests
 
             Assert.Throws<InvalidOperationException>(() => GetSocket().ReceiveMessageFrom(s_buffer, 0, 0, ref flags, ref remote, out packetInfo));
         }
-
-        [Fact]
-        public void SetIPProtectionLevel_Unspecified_Throws_Argument()
-        {
-            Assert.Throws<ArgumentException>(() => GetSocket().SetIPProtectionLevel(IPProtectionLevel.Unspecified));
-        }
-
+        
         [Fact]
         public void SetSocketOption_Object_ObjectNull_Throws_ArgumentNull()
         {
@@ -618,12 +606,6 @@ namespace System.Net.Sockets.Tests
         public void ConnectAsync_Static_NullRemoteEndPoint_Throws_ArgumentNull()
         {
             Assert.Throws<ArgumentNullException>(() => Socket.ConnectAsync(SocketType.Stream, ProtocolType.Tcp, s_eventArgs));
-        }
-
-        [Fact]
-        public void DisconnectAsync_NullAsyncEventArgs_Throws_ArgumentNull()
-        {
-            Assert.Throws<ArgumentNullException>(() => GetSocket().DisconnectAsync(null));
         }
 
         [Fact]

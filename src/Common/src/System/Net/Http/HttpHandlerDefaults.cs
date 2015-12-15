@@ -4,7 +4,7 @@
 namespace System.Net.Http
 {
     /// <summary>
-    /// Defines default values for http handler properties which is meant to be re-used across WinHttp & UnixHttp Handlers
+    /// Defines default values for http handler properties which is meant to be re-used across WinHttp and UnixHttp Handlers
     /// </summary>
     internal static class HttpHandlerDefaults
     {
@@ -13,5 +13,6 @@ namespace System.Net.Http
         public const bool DefaultAutomaticRedirection = true;
         public const bool DefaultUseCookies = true;
         public const bool DefaultPreAuthenticate = false;
+        public const ClientCertificateOption DefaultClientCertificateOption = ClientCertificateOption.Manual;
     }
 }

@@ -108,9 +108,22 @@ namespace System.Net.Security
                     }
                 }
 
-                // TODO (3390): Add support for ECDSA.
+                if (_certKeyHandle == null)
+                {
+                    using (ECDsaOpenSsl ecdsa = (ECDsaOpenSsl)cert.GetECDsaPrivateKey())
+                    {
+                        if (ecdsa != null)
+                        {
+                            _certKeyHandle = ecdsa.DuplicateKeyHandle();
+                            Interop.Crypto.CheckValidOpenSslHandle(_certKeyHandle);
+                        }
+                    }
+                }
 
-                Debug.Assert(_certKeyHandle != null, "Failed to extract a private key handle");
+                if (_certKeyHandle == null)
+                {
+                    throw new NotSupportedException(SR.net_ssl_io_no_server_cert);
+                }
 
                 _certHandle = Interop.Crypto.X509Duplicate(cert.Handle);
                 Interop.Crypto.CheckValidOpenSslHandle(_certHandle);
@@ -200,9 +213,9 @@ namespace System.Net.Security
     {
 #endif
         private readonly SafeFreeCredentials _credential;
-        private readonly Interop.libssl.SafeSslHandle _sslContext;
+        private readonly SafeSslHandle _sslContext;
 
-        public Interop.libssl.SafeSslHandle SslContext
+        public SafeSslHandle SslContext
         {
             get
             {
@@ -210,7 +223,7 @@ namespace System.Net.Security
             }
         }
 
-        public SafeDeleteContext(SafeFreeCredentials credential, long options, string encryptionPolicy, bool isServer, bool remoteCertRequired)
+        public SafeDeleteContext(SafeFreeCredentials credential, bool isServer, bool remoteCertRequired)
             : base(IntPtr.Zero, true)
         {
             Debug.Assert((null != credential) && !credential.IsInvalid, "Invalid credential used in SafeDeleteContext");
@@ -219,26 +232,28 @@ namespace System.Net.Security
             // ref count bumped up to ensure ordered finalization. The certificate handle and
             // key handle are used in the SSL data structures and should survive the lifetime of
             // the SSL context
-            bool ignore = false;
+            bool gotCredRef = false;
             _credential = credential;
-            _credential.DangerousAddRef(ref ignore);
+            _credential.DangerousAddRef(ref gotCredRef);
 
             try
             {
                 _sslContext = Interop.OpenSsl.AllocateSslContext(
-                    options,
+                    credential.Protocols,
                     credential.CertHandle,
                     credential.CertKeyHandle,
-                    encryptionPolicy,
+                    credential.Policy,
                     isServer,
                     remoteCertRequired);
             }
-            finally
+            catch(Exception ex)
             {
-                if (IsInvalid)
+                if (gotCredRef)
                 {
                     _credential.DangerousRelease();
                 }
+                Debug.Write("Exception Caught. - " + ex);
+                throw;
             }
         }
 
@@ -252,10 +267,19 @@ namespace System.Net.Security
 
         protected override bool ReleaseHandle()
         {
-            Interop.OpenSsl.FreeSslContext(_sslContext);
             Debug.Assert((null != _credential) && !_credential.IsInvalid, "Invalid credential saved in SafeDeleteContext");
             _credential.DangerousRelease();
             return true;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _sslContext.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
 
         public override string ToString()
@@ -264,8 +288,34 @@ namespace System.Net.Security
         }
     }
 
-    internal abstract class SafeFreeContextBufferChannelBinding : ChannelBinding
+    internal sealed class SafeFreeContextBufferChannelBinding : ChannelBinding
     {
-        // TODO (Issue #3362) To be implemented
+        private readonly SafeChannelBindingHandle _channelBinding = null;
+
+        public override int Size
+        {
+            get { return _channelBinding.Length; }
+        }
+
+        public override bool IsInvalid
+        {
+            get { return _channelBinding.IsInvalid; }
+        }
+
+        public SafeFreeContextBufferChannelBinding(SafeChannelBindingHandle binding)
+        {
+            Debug.Assert(null != binding && !binding.IsInvalid, "input channelBinding is invalid");
+            bool gotRef = false;
+            binding.DangerousAddRef(ref gotRef);
+            handle = binding.DangerousGetHandle();
+            _channelBinding = binding;
+        }
+
+        protected override bool ReleaseHandle()
+        {
+            _channelBinding.DangerousRelease();
+            _channelBinding.Dispose();
+            return true;
+        }
     }
 }

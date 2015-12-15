@@ -105,6 +105,8 @@ namespace System.Data.SqlClient
 
         // Version variables
 
+        private bool _isYukon = false; // set to true if speaking to Yukon or later
+
         private bool _isKatmai = false;
 
         private bool _isDenali = false;
@@ -1135,7 +1137,15 @@ namespace System.Data.SqlClient
                 {
                     serverVersion = _connHandler.ServerVersion;
                 }
-                exception = SqlException.CreateException(temp, serverVersion, _connHandler);
+
+                if(temp.Count == 1 && temp[0].Exception != null)
+                {
+                    exception = SqlException.CreateException(temp, serverVersion, _connHandler, temp[0].Exception);
+                }
+                else
+                {
+                    exception = SqlException.CreateException(temp, serverVersion, _connHandler);
+                }
             }
 
             // call OnError outside of _ErrorCollectionLock to avoid deadlock
@@ -1213,9 +1223,6 @@ namespace System.Data.SqlClient
             SNINativeMethodWrapper.SNI_Error sniError;
             SNINativeMethodWrapper.SNIGetLastError(out sniError);
 #endif // MANAGED_SNI
-#if MANAGED_SNI
-            // NYI
-#else
             if (sniError.sniError != 0)
             {
                 // handle special SNI error codes that are converted into exception which is not a SqlException.
@@ -1235,7 +1242,6 @@ namespace System.Data.SqlClient
                         // continue building SqlError instance
                 }
             }
-#endif // MANAGED_SNI
             // PInvoke code automatically sets the length of the string for us
             // So no need to look for \0
             string errorMessage = sniError.errorMessage;
@@ -1253,12 +1259,15 @@ namespace System.Data.SqlClient
             // !=null       | == 0     | replace text left of errorMessage
             //
 
+#if MANAGED_SNI
+            Debug.Assert(!ADP.IsEmpty(errorMessage) || sniError.sniError != 0, "Empty error message received from SNI");
+#else
             Debug.Assert(!ADP.IsEmpty(errorMessage), "Empty error message received from SNI");
+#endif
 
-            string sqlContextInfo = Res.GetString(Enum.GetName(typeof(SniContext), stateObj.SniContext));
-
+            string sqlContextInfo = SR.GetResourceString(Enum.GetName(typeof(SniContext), stateObj.SniContext), Enum.GetName(typeof(SniContext), stateObj.SniContext));
             string providerRid = String.Format((IFormatProvider)null, "SNI_PN{0}", (int)sniError.provider);
-            string providerName = Res.GetString(providerRid);
+            string providerName = SR.GetResourceString(providerRid, providerRid);
             Debug.Assert(!ADP.IsEmpty(providerName), String.Format((IFormatProvider)null, "invalid providerResourceId '{0}'", providerRid));
             uint win32ErrorCode = sniError.nativeError;
 
@@ -1292,12 +1301,18 @@ namespace System.Data.SqlClient
             }
             else
             {
-                // SNI error. Replace the entire message
+#if MANAGED_SNI
+                // SNI error. Append additional error message info if available.
+                //
+                string sniLookupMessage = SQL.GetSNIErrorMessage((int)sniError.sniError);
+                errorMessage =  (sniError.errorMessage != string.Empty) ?
+                                (sniLookupMessage + ": " + sniError.errorMessage) :
+                                sniLookupMessage;
+#else
+                // SNI error. Replace the entire message.
                 //
                 errorMessage = SQL.GetSNIErrorMessage((int)sniError.sniError);
 
-#if MANAGED_SNI
-#else
                 // If its a LocalDB error, then nativeError actually contains a LocalDB-specific error code, not a win32 error code
                 if (sniError.sniError == (int)SNINativeMethodWrapper.SniSpecialErrors.LocalDBErrorCode)
                 {
@@ -1309,8 +1324,13 @@ namespace System.Data.SqlClient
             errorMessage = String.Format((IFormatProvider)null, "{0} (provider: {1}, error: {2} - {3})",
                 sqlContextInfo, providerName, (int)sniError.sniError, errorMessage);
 
+#if MANAGED_SNI
             return new SqlError((int)sniError.nativeError, 0x00, TdsEnums.FATAL_ERROR_CLASS,
-                                _server, errorMessage, sniError.function, (int)sniError.lineNumber, win32ErrorCode);
+                                _server, errorMessage, sniError.function, (int)sniError.lineNumber, win32ErrorCode, sniError.exception);
+#else
+            return new SqlError((int)sniError.nativeError, 0x00, TdsEnums.FATAL_ERROR_CLASS,
+                    _server, errorMessage, sniError.function, (int)sniError.lineNumber, win32ErrorCode);
+#endif
         }
 
         internal void CheckResetConnection(TdsParserStateObject stateObj)
@@ -2913,6 +2933,7 @@ namespace System.Data.SqlClient
             {
                 case TdsEnums.YUKON_MAJOR << 24 | TdsEnums.YUKON_RTM_MINOR:     // Yukon
                     if (increment != TdsEnums.YUKON_INCREMENT) { throw SQL.InvalidTDSVersion(); }
+                    _isYukon = true;
                     break;
                 case TdsEnums.KATMAI_MAJOR << 24 | TdsEnums.KATMAI_MINOR:
                     if (increment != TdsEnums.KATMAI_INCREMENT) { throw SQL.InvalidTDSVersion(); }
@@ -2927,6 +2948,7 @@ namespace System.Data.SqlClient
             }
 
             _isKatmai |= _isDenali;
+            _isYukon |= _isKatmai;
 
             stateObj._outBytesUsed = stateObj._outputHeaderLen;
             byte len;
@@ -3048,9 +3070,42 @@ namespace System.Data.SqlClient
             }
 
             int line;
-            if (!stateObj.TryReadInt32(out line))
+            if (_isYukon)
             {
-                return false;
+                if (!stateObj.TryReadInt32(out line))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                ushort shortLine;
+                if (!stateObj.TryReadUInt16(out shortLine))
+                {
+                    return false;
+                }
+                line = shortLine;
+                // If we haven't yet completed processing login token stream yet, we may be talking to a Yukon server
+                // In that case we still have to read another 2 bytes
+                if (_state == TdsParserState.OpenNotLoggedIn)
+                {
+                    // Login incomplete
+                    byte b;
+                    if (!stateObj.TryPeekByte(out b))
+                    {
+                        return false;
+                    }
+                    if (b == 0)
+                    {
+                        // This is an invalid token value
+                        ushort value;
+                        if (!stateObj.TryReadUInt16(out value))
+                        {
+                            return false;
+                        }
+                        line = (line << 16) + value;
+                    }
+                }
             }
 
             error = new SqlError(number, state, errorClass, _server, message, procedure, line);
@@ -3167,6 +3222,8 @@ namespace System.Data.SqlClient
 
             if (tdsType == TdsEnums.SQLUDT)
             {
+                _state = TdsParserState.Broken;
+                _connHandler.BreakConnection();
                 throw SQL.UnsupportedFeatureAndToken(_connHandler, SqlDbType.Udt.ToString());
             }
 
@@ -8601,7 +8658,8 @@ namespace System.Data.SqlClient
             Debug.Assert(encoding == null || !needBom);
             char[] inBuff = new char[constTextBufferSize];
 
-            encoding = encoding ?? Encoding.Unicode;
+            encoding = encoding ?? new UnicodeEncoding(false, false);
+
             ConstrainedTextWriter writer = new ConstrainedTextWriter(new StreamWriter(new TdsOutputStream(this, stateObj, null), encoding), size);
 
             if (needBom)

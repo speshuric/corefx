@@ -600,28 +600,26 @@ namespace System.Security.Cryptography.X509Certificates.Tests
         }
 
         [Fact]
-        [ActiveIssue(1993, PlatformID.AnyUnix)]
         public static void ExportCert()
         {
             TestExportSingleCert(X509ContentType.Cert);
         }
 
         [Fact]
-        [ActiveIssue(1993, PlatformID.AnyUnix)]
+        [PlatformSpecific(PlatformID.Windows)]
         public static void ExportSerializedCert()
         {
             TestExportSingleCert(X509ContentType.SerializedCert);
         }
 
         [Fact]
-        [ActiveIssue(1993, PlatformID.AnyUnix)]
+        [PlatformSpecific(PlatformID.Windows)]
         public static void ExportSerializedStore()
         {
             TestExportStore(X509ContentType.SerializedStore);
         }
 
         [Fact]
-        [ActiveIssue(1993, PlatformID.AnyUnix)]
         public static void ExportPkcs7()
         {
             TestExportStore(X509ContentType.Pkcs7);

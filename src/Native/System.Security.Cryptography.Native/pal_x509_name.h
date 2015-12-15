@@ -21,7 +21,7 @@ extern "C" X509_NAME* GetX509NameStackField(X509NameStack* sk, int32_t loc);
 /*
 Shims the d2i_X509_NAME method and makes it easier to invoke from managed code.
 */
-extern "C" X509_NAME* DecodeX509Name(const unsigned char* buf, int32_t len);
+extern "C" X509_NAME* DecodeX509Name(const uint8_t* buf, int32_t len);
 
 /*
 Cleans up and deletes an X509_NAME instance.
@@ -40,7 +40,7 @@ NewX509NameStack
 
 Direct shim to sk_X509_NAME_new_null
 */
-extern "C" STACK_OF(X509_NAME)* NewX509NameStack();
+extern "C" STACK_OF(X509_NAME) * NewX509NameStack();
 
 /*
 Function:
@@ -51,7 +51,7 @@ Return values:
 1 on success
 0 on a NULL stack, or an error within sk_X509_NAME_push
 */
-extern "C" int32_t PushX509NameStackField(STACK_OF(X509_NAME)* stack, X509_NAME* x509Name);
+extern "C" int32_t PushX509NameStackField(STACK_OF(X509_NAME) * stack, X509_NAME * x509Name);
 
 /*
 Function:
@@ -59,7 +59,7 @@ RecursiveFreeX509NameStack
 
 Direct shim to sk_X509_NAME_pop_free
 */
-extern "C" void RecursiveFreeX509NameStack(STACK_OF(X509_NAME)* stack);
+extern "C" void RecursiveFreeX509NameStack(STACK_OF(X509_NAME) * stack);
 
 /*
 Function:

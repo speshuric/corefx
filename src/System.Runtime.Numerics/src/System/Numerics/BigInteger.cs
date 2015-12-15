@@ -32,8 +32,8 @@ namespace System.Numerics
 
         // For values int.MinValue < n <= int.MaxValue, the value is stored in sign
         // and _bits is null. For all other values, sign is +1 or -1 and the bits are in _bits
-        internal int _sign;
-        internal uint[] _bits;
+        internal readonly int _sign;
+        internal readonly uint[] _bits;
 
         // We have to make a choice of how to represent int.MinValue. This is the one
         // value that fits in an int, but whose negation does not fit in an int.
@@ -94,7 +94,7 @@ namespace System.Numerics
 
                 if (_sign != 1)
                     return false;
-                int iu = Length(_bits) - 1;
+                int iu = _bits.Length - 1;
                 if ((_bits[iu] & (_bits[iu] - 1)) != 0)
                     return false;
                 while (--iu >= 0)
@@ -139,7 +139,7 @@ namespace System.Numerics
             if (_bits == null)
                 return _sign;
             int hash = _sign;
-            for (int iv = Length(_bits); --iv >= 0;)
+            for (int iv = _bits.Length; --iv >= 0;)
                 hash = NumericsHelpers.CombineHash(hash, (int)_bits[iv]);
             return hash;
         }
@@ -152,7 +152,7 @@ namespace System.Numerics
                 return _sign == other;
 
             int cu;
-            if ((_sign ^ other) < 0 || (cu = Length(_bits)) > 2)
+            if ((_sign ^ other) < 0 || (cu = _bits.Length) > 2)
                 return false;
 
             ulong uu = other < 0 ? (ulong)-other : (ulong)other;
@@ -172,7 +172,7 @@ namespace System.Numerics
             if (_bits == null)
                 return (ulong)_sign == other;
 
-            int cu = Length(_bits);
+            int cu = _bits.Length;
             if (cu > 2)
                 return false;
             if (cu == 1)
@@ -193,8 +193,8 @@ namespace System.Numerics
 
             if (_bits == null || other._bits == null)
                 return false;
-            int cu = Length(_bits);
-            if (cu != Length(other._bits))
+            int cu = _bits.Length;
+            if (cu != other._bits.Length)
                 return false;
             int cuDiff = GetDiffLength(_bits, other._bits, cu);
             return cuDiff == 0;
@@ -207,7 +207,7 @@ namespace System.Numerics
             if (_bits == null)
                 return ((long)_sign).CompareTo(other);
             int cu;
-            if ((_sign ^ other) < 0 || (cu = Length(_bits)) > 2)
+            if ((_sign ^ other) < 0 || (cu = _bits.Length) > 2)
                 return _sign;
             ulong uu = other < 0 ? (ulong)-other : (ulong)other;
             ulong uuTmp = cu == 2 ? NumericsHelpers.MakeUlong(_bits[1], _bits[0]) : _bits[0];
@@ -223,7 +223,7 @@ namespace System.Numerics
                 return -1;
             if (_bits == null)
                 return ((ulong)_sign).CompareTo(other);
-            int cu = Length(_bits);
+            int cu = _bits.Length;
             if (cu > 2)
                 return +1;
             ulong uuTmp = cu == 2 ? NumericsHelpers.MakeUlong(_bits[1], _bits[0]) : _bits[0];
@@ -249,7 +249,7 @@ namespace System.Numerics
                 return -other._sign;
             }
             int cuThis, cuOther;
-            if (other._bits == null || (cuThis = Length(_bits)) > (cuOther = Length(other._bits)))
+            if (other._bits == null || (cuThis = _bits.Length) > (cuOther = other._bits.Length))
                 return _sign;
             if (cuThis < cuOther)
                 return -_sign;
@@ -552,17 +552,8 @@ namespace System.Numerics
         }
 
         public BigInteger(Single value)
+            : this((Double)value)
         {
-            if (Single.IsInfinity(value))
-                throw new OverflowException(SR.Overflow_BigIntInfinity);
-            if (Single.IsNaN(value))
-                throw new OverflowException(SR.Overflow_NotANumber);
-            Contract.EndContractBlock();
-
-            _sign = 0;
-            _bits = null;
-            SetBitsFromDouble(value);
-            AssertValid();
         }
 
         public BigInteger(Double value)
@@ -575,7 +566,61 @@ namespace System.Numerics
 
             _sign = 0;
             _bits = null;
-            SetBitsFromDouble(value);
+
+            int sign, exp;
+            ulong man;
+            bool fFinite;
+            NumericsHelpers.GetDoubleParts(value, out sign, out exp, out man, out fFinite);
+            Debug.Assert(sign == +1 || sign == -1);
+
+            if (man == 0)
+            {
+                this = BigInteger.Zero;
+                return;
+            }
+
+            Debug.Assert(man < (1UL << 53));
+            Debug.Assert(exp <= 0 || man >= (1UL << 52));
+
+            if (exp <= 0)
+            {
+                if (exp <= -kcbitUlong)
+                {
+                    this = BigInteger.Zero;
+                    return;
+                }
+                this = man >> -exp;
+                if (sign < 0)
+                    _sign = -_sign;
+            }
+            else if (exp <= 11)
+            {
+                this = man << exp;
+                if (sign < 0)
+                    _sign = -_sign;
+            }
+            else
+            {
+                // Overflow into at least 3 uints.
+                // Move the leading 1 to the high bit.
+                man <<= 11;
+                exp -= 11;
+
+                // Compute cu and cbit so that exp == 32 * cu - cbit and 0 <= cbit < 32.
+                int cu = (exp - 1) / kcbitUint + 1;
+                int cbit = cu * kcbitUint - exp;
+                Debug.Assert(0 <= cbit && cbit < kcbitUint);
+                Debug.Assert(cu >= 1);
+
+                // Populate the uints.
+                _bits = new uint[cu + 2];
+                _bits[cu + 1] = (uint)(man >> (cbit + kcbitUint));
+                _bits[cu] = (uint)(man >> cbit);
+                if (cbit > 0)
+                    _bits[cu - 1] = (uint)man << (kcbitUint - cbit);
+                _sign = sign;
+            }
+
             AssertValid();
         }
 
@@ -1313,7 +1358,7 @@ namespace System.Numerics
             {
                 return value._sign;  // value packed into int32 sign
             }
-            else if (Length(value._bits) > 1)
+            else if (value._bits.Length > 1)
             { // more than 32 bits
                 throw new OverflowException(SR.Overflow_Int32);
             }
@@ -1339,7 +1384,7 @@ namespace System.Numerics
             {
                 return checked((uint)value._sign);
             }
-            else if (Length(value._bits) > 1 || value._sign < 0)
+            else if (value._bits.Length > 1 || value._sign < 0)
             {
                 throw new OverflowException(SR.Overflow_UInt32);
             }
@@ -1357,7 +1402,7 @@ namespace System.Numerics
                 return value._sign;
             }
 
-            int len = Length(value._bits);
+            int len = value._bits.Length;
             if (len > 2)
             {
                 throw new OverflowException(SR.Overflow_Int64);
@@ -1391,7 +1436,7 @@ namespace System.Numerics
                 return checked((ulong)value._sign);
             }
 
-            int len = Length(value._bits);
+            int len = value._bits.Length;
             if (len > 2 || value._sign < 0)
             {
                 throw new OverflowException(SR.Overflow_UInt64);
@@ -1440,7 +1485,7 @@ namespace System.Numerics
             if (value._bits == null)
                 return (Decimal)value._sign;
 
-            int length = Length(value._bits);
+            int length = value._bits.Length;
             if (length > 3) throw new OverflowException(SR.Overflow_Decimal);
 
             int lo = 0, mi = 0, hi = 0;
@@ -1618,9 +1663,7 @@ namespace System.Numerics
         public static BigInteger operator -(BigInteger value)
         {
             value.AssertValid();
-            value._sign = -value._sign;
-            value.AssertValid();
-            return value;
+            return new BigInteger(-value._sign, value._bits);
         }
 
         public static BigInteger operator +(BigInteger value)
@@ -1985,91 +2028,8 @@ namespace System.Numerics
 
         #endregion public static operators
 
-
-        // ----- SECTION: internal instance utility methods ----------------*
-        #region internal instance utility methods
-
-        private void SetBitsFromDouble(Double value)
-        {
-            int sign, exp;
-            ulong man;
-            bool fFinite;
-            NumericsHelpers.GetDoubleParts(value, out sign, out exp, out man, out fFinite);
-            Debug.Assert(sign == +1 || sign == -1);
-
-            if (man == 0)
-            {
-                this = BigInteger.Zero;
-                return;
-            }
-
-            Debug.Assert(man < (1UL << 53));
-            Debug.Assert(exp <= 0 || man >= (1UL << 52));
-
-            if (exp <= 0)
-            {
-                if (exp <= -kcbitUlong)
-                {
-                    this = BigInteger.Zero;
-                    return;
-                }
-                this = man >> -exp;
-                if (sign < 0)
-                    _sign = -_sign;
-            }
-            else if (exp <= 11)
-            {
-                this = man << exp;
-                if (sign < 0)
-                    _sign = -_sign;
-            }
-            else
-            {
-                // Overflow into at least 3 uints.
-                // Move the leading 1 to the high bit.
-                man <<= 11;
-                exp -= 11;
-
-                // Compute cu and cbit so that exp == 32 * cu - cbit and 0 <= cbit < 32.
-                int cu = (exp - 1) / kcbitUint + 1;
-                int cbit = cu * kcbitUint - exp;
-                Debug.Assert(0 <= cbit && cbit < kcbitUint);
-                Debug.Assert(cu >= 1);
-
-                // Populate the uints.
-                _bits = new uint[cu + 2];
-                _bits[cu + 1] = (uint)(man >> (cbit + kcbitUint));
-                _bits[cu] = (uint)(man >> cbit);
-                if (cbit > 0)
-                    _bits[cu - 1] = (uint)man << (kcbitUint - cbit);
-                _sign = sign;
-            }
-        }
-        #endregion internal instance utility methods
-
-
         // ----- SECTION: internal static utility methods ----------------*
         #region internal static utility methods
-        [Pure]
-        internal static int Length(uint[] rgu)
-        {
-            Debug.Assert(rgu[rgu.Length - 1] != 0);
-
-            // no leading zeros
-            return rgu.Length;
-        }
-
-        internal static int BitLengthOfUInt(uint x)
-        {
-            int numBits = 0;
-            while (x > 0)
-            {
-                x >>= 1;
-                numBits++;
-            }
-            return numBits;
-        }
-
         //
         // GetPartsForBitManipulation -
         //

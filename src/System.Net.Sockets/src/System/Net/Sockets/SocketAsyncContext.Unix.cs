@@ -27,6 +27,26 @@ namespace System.Net.Sockets
     //       unregistration in order to avoid this. If so, this would probably happen
     //       by adding a flag that indicates that the event loop is processing events and
     //       a queue of contexts to unregister once processing completes.
+    //
+    // NOTE: the publicly-exposed asynchronous methods should match the behavior of
+    //       Winsock overlapped sockets as closely as possible. Especially important are
+    //       completion semantics, as the consuming code relies on the Winsock behavior.
+    //
+    //       Winsock queues a completion callback for an overlapped operation in two cases:
+    //         1. the operation successfully completes synchronously, or
+    //         2. the operation completes asynchronously, successfully or otherwise.
+    //       In other words, a completion callback is queued iff an operation does not
+    //       fail synchronously. The asynchronous methods below (e.g. ReceiveAsync) may
+    //       fail synchronously for either of the following reasons:
+    //         1. an underlying system call fails synchronously, or
+    //         2. an underlying system call returns EAGAIN, but the socket is closed before
+    //            the method is able to enqueue its corresponding operation.
+    //       In the first case, the async method should return the SocketError that
+    //       corresponds to the native error code; in the second, the method should return
+    //       SocketError.OperationAborted (which matches what Winsock would return in this
+    //       case). The publicly-exposed synchronous methods may also encounter the second
+    //       case. In this situation these methods should return SocketError.Interrupted
+    //       (which again matches Winsock).
     internal sealed class SocketAsyncContext
     {
         private abstract class AsyncOperation
@@ -366,6 +386,23 @@ namespace System.Net.Sockets
             }
         }
 
+        private static SocketAsyncContext s_closedAsyncContext;
+        public static SocketAsyncContext ClosedAsyncContext
+        {
+            get
+            {
+                if (Volatile.Read(ref s_closedAsyncContext) == null)
+                {
+                    var ctx = new SocketAsyncContext(-1, null);
+                    ctx.Close();
+
+                    Volatile.Write(ref s_closedAsyncContext, ctx);
+                }
+
+                return s_closedAsyncContext;
+            }
+        }
+
         private int _fileDescriptor;
         private GCHandle _handle;
         private OperationQueue<TransferOperation> _receiveQueue;
@@ -591,9 +628,8 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error reasonable for a closed socket? Check with Winsock.
                         acceptedFd = -1;
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -650,11 +686,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error reasonable for a closed socket? Check with Winsock.
-                    operation.AcceptedFileDescriptor = -1;
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))
@@ -691,8 +723,7 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error reasonable for a closed socket? Check with Winsock.
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -732,10 +763,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error code reasonable for a closed socket? Check with Winsock.
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))
@@ -789,10 +817,9 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error code reasonable for a closed socket? Check with Winsock.
                         flags = operation.ReceivedFlags;
                         bytesReceived = operation.BytesTransferred;
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -847,10 +874,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error code reasonable for a closed socket? Check with Winsock.
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))
@@ -901,10 +925,9 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error code reasonable for a closed socket? Check with Winsock.
                         flags = operation.ReceivedFlags;
                         bytesReceived = operation.BytesTransferred;
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -957,10 +980,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error code reasonable for a closed socket? Check with Winsock.
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))
@@ -1006,12 +1026,11 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error code reasonable for a closed socket? Check with Winsock.
                         socketAddressLen = operation.SocketAddressLen;
                         flags = operation.ReceivedFlags;
                         ipPacketInformation = operation.IPPacketInformation;
                         bytesReceived = operation.BytesTransferred;
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -1072,10 +1091,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error code reasonable for a closed socket? Check with Winsock.
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))
@@ -1126,9 +1142,8 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error code reasonable for a closed socket? Check with Winsock.
                         bytesSent = operation.BytesTransferred;
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -1177,10 +1192,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error code reasonable for a closed socket? Check with Winsock.
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))
@@ -1233,9 +1245,8 @@ namespace System.Net.Sockets
                 {
                     if (isStopped)
                     {
-                        // TODO: is this error code reasonable for a closed socket? Check with Winsock.
                         bytesSent = operation.BytesTransferred;
-                        return SocketError.Shutdown;
+                        return SocketError.Interrupted;
                     }
 
                     if (operation.TryComplete(_fileDescriptor))
@@ -1286,10 +1297,7 @@ namespace System.Net.Sockets
             {
                 if (isStopped)
                 {
-                    // TODO: is this error code reasonable for a closed socket? Check with Winsock.
-                    operation.ErrorCode = SocketError.Shutdown;
-                    operation.QueueCompletionCallback();
-                    return SocketError.Shutdown;
+                    return SocketError.OperationAborted;
                 }
 
                 if (operation.TryComplete(_fileDescriptor))

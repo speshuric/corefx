@@ -1,9 +1,6 @@
 ﻿// Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-using System;
-using System.Net;
-
 using Xunit;
 
 namespace System.Net.Primitives.Functional.Tests
@@ -82,7 +79,6 @@ namespace System.Net.Primitives.Functional.Tests
             Assert.Throws<FormatException>(() => { IPAddress.Parse("Fe08::/64"); });
         }
 
-        [ActiveIssue(3213, PlatformID.OSX)]
         [Fact]
         public void ParseIPv6_ScopeId_Success()
         {

@@ -1,18 +1,48 @@
-// Copyright (c) 2015, Intel Corporation
-// Copyright (c) Microsoft. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 // File implements Slicing-by-8 CRC Generation, as described in
 // "Novel Table Lookup-Based Algorithms for High-Performance CRC Generation"
 // IEEE TRANSACTIONS ON COMPUTERS, VOL. 57, NO. 11, NOVEMBER 2008
 
+/*
+ * Copyright (c) 2004-2006 Intel Corporation - All Rights Reserved
+ *
+ *
+ * This software program is licensed subject to the BSD License, 
+ * available at http://www.opensource.org/licenses/bsd-license.html.
+ */
+
 using System.Diagnostics;
 
 namespace System.IO.Compression
 {
+    /// <summary>
+    /// This class contains a managed Crc32 function as well as an indirection to the Interop.Zlib.Crc32 call.
+    /// Since Desktop compression uses this file alongside the Open ZipArchive, we cannot remove it
+    /// without breaking the Desktop build. 
+    /// 
+    /// Note that in CoreFX the ZlibCrc32 function is always called.
+    /// </summary>
     internal static class Crc32Helper
     {
-        // Generated tables for crc calculation.
+         // Calculate CRC based on the old CRC and the new bytes 
+        // See RFC1952 for details.
+        public static uint UpdateCrc32(uint crc32, byte[] buffer, int offset, int length)
+        {
+            Debug.Assert((buffer != null) && (offset >= 0) && (length >= 0)
+                       && (offset <= buffer.Length - length), "check the caller");
+#if FEATURE_ZLIB
+            return Interop.zlib.crc32(crc32, buffer, offset, length);
+#else
+            return ManagedCrc32(crc32, buffer, offset, length);
+#endif
+
+        }
+
+#if !FEATURE_ZLIB
+
+        // Generated tables for managed crc calculation.
         // Each table n (starting at 0) contains remainders from the long division of 
         // all possible byte values, shifted by an offset of (n * 4 bits).
         // The divisor used is the crc32 standard polynomial 0xEDB88320
@@ -450,14 +480,9 @@ namespace System.IO.Compression
             0x264B06E6u
         };
 
-        // Calculate CRC based on the old CRC and the new bytes 
-        // See RFC1952 for details.
-        static public uint UpdateCrc32(uint crc32, byte[] buffer, int offset, int length)
+        private static uint ManagedCrc32(uint crc32, byte[] buffer, int offset, int length)
         {
-            Debug.Assert((buffer != null) && (offset >= 0) && (length >= 0)
-                       && (offset <= buffer.Length - length), "check the caller");
-
-            Debug.Assert(BitConverter.IsLittleEndian, "UpdateCrc32 Expects Little Endian");
+            Debug.Assert(BitConverter.IsLittleEndian, "ManagedCrc32 Expects Little Endian");
 
             uint term1, term2, term3 = 0;
 
@@ -495,5 +520,6 @@ namespace System.IO.Compression
             crc32 ^= 0xFFFFFFFFU;
             return crc32;
         }
+#endif
     }
 }

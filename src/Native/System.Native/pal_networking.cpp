@@ -24,8 +24,22 @@
 #include <stdlib.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#if defined(__APPLE__) && __APPLE__
+#include <sys/socketvar.h>
+#endif
 #include <unistd.h>
 #include <vector>
+
+#if !HAVE_IN_PKTINFO
+// On platforms, such as FreeBSD, where in_pktinfo
+// is not available, fallback to custom definition
+// with required members.
+struct in_pktinfo
+{
+    in_addr ipi_addr;
+};
+#define IP_PKTINFO IP_RECVDSTADDR
+#endif
 
 #if !defined(IPV6_ADD_MEMBERSHIP) && defined(IPV6_JOIN_GROUP)
 #define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
@@ -35,7 +49,25 @@
 #define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
 #endif
 
-const int INET6_ADDRSTRLEN_MANAGED = 65; // The C# code has a longer max string length
+enum
+{
+#if defined(__APPLE__) && __APPLE__
+    LINGER_OPTION_NAME = SO_LINGER_SEC
+#else
+    LINGER_OPTION_NAME = SO_LINGER,
+#endif
+};
+
+enum
+{
+    HOST_ENTRY_HANDLE_ADDRINFO = 1,
+    HOST_ENTRY_HANDLE_HOSTENT = 2,
+};
+
+enum
+{
+    INET6_ADDRSTRLEN_MANAGED = 65 // Managed code has a longer max IPv6 string length
+};
 
 static_assert(PAL_HOST_NOT_FOUND == HOST_NOT_FOUND, "");
 static_assert(PAL_TRY_AGAIN == TRY_AGAIN, "");
@@ -58,9 +90,6 @@ static_assert(OffsetOfIOVectorBase == OffsetOfIovecBase, "");
 static_assert(sizeof(decltype(IOVector::Count)) == sizeof(decltype(iovec::iov_len)), "");
 static_assert(OffsetOfIOVectorCount == OffsetOfIovecLen, "");
 
-// We require that FDSET_MAX_FDS is less than or equal to FD_SETSIZE.
-static_assert(PAL_FDSET_MAX_FDS <= FD_SETSIZE, "");
-
 template <typename T>
 constexpr T Min(T left, T right)
 {
@@ -72,7 +101,6 @@ constexpr T Max(T left, T right)
 {
     return left > right ? left : right;
 }
-
 
 static int IpStringToAddressHelper(const uint8_t* address, const uint8_t* port, bool isIPv6, addrinfo*& info)
 {
@@ -106,7 +134,7 @@ static void ConvertIn6AddrToByteArray(uint8_t* buffer, int32_t bufferLength, con
 #endif
 }
 
-static void ConvertByteArrayToV6SockAddrIn(sockaddr_in6& addr, const uint8_t* buffer, int32_t bufferLength)
+static void ConvertByteArrayToSockAddrIn6(sockaddr_in6& addr, const uint8_t* buffer, int32_t bufferLength)
 {
     ConvertByteArrayToIn6Addr(addr.sin6_addr, buffer, bufferLength);
 
@@ -114,13 +142,12 @@ static void ConvertByteArrayToV6SockAddrIn(sockaddr_in6& addr, const uint8_t* bu
     addr.sin6_family = AF_INET6;
 }
 
-static void ConvertByteArrayToSockAddrIn(sockaddr_in& addr, const uint8_t* buffer, int32_t bufferLength)
+static void ConvertByteArrayToInAddr(in_addr& addr, const uint8_t* buffer, int32_t bufferLength)
 {
     assert(bufferLength == NUM_BYTES_IN_IPV4_ADDRESS);
     (void)bufferLength; // Silence compiler warnings about unused variables on release mode
 
-    addr.sin_addr.s_addr = *reinterpret_cast<const uint32_t*>(buffer); // The address comes as network byte order
-    addr.sin_family = AF_INET;
+    addr.s_addr = *reinterpret_cast<const uint32_t*>(buffer); // Send back in network byte order.
 }
 
 static void ConvertInAddrToByteArray(uint8_t* buffer, int32_t bufferLength, const in_addr& addr)
@@ -129,6 +156,13 @@ static void ConvertInAddrToByteArray(uint8_t* buffer, int32_t bufferLength, cons
     (void)bufferLength; // Silence compiler warnings about unused variables on release mode
 
     *reinterpret_cast<uint32_t*>(buffer) = addr.s_addr; // Send back in network byte order.
+}
+
+static void ConvertByteArrayToSockAddrIn(sockaddr_in& addr, const uint8_t* buffer, int32_t bufferLength)
+{
+    ConvertByteArrayToInAddr(addr.sin_addr, buffer, bufferLength);
+
+    addr.sin_family = AF_INET;
 }
 
 static int32_t ConvertGetAddrInfoAndGetNameInfoErrorsToPal(int32_t error)
@@ -201,12 +235,29 @@ extern "C" int32_t IPv4StringToAddress(const uint8_t* address, uint8_t* buffer, 
     return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(result);
 }
 
-extern "C" int32_t IPAddressToString(const uint8_t* address,
-                                     int32_t addressLength,
-                                     bool isIPv6,
-                                     uint8_t* string,
-                                     int32_t stringLength,
-                                     uint32_t scope /* = 0*/)
+static void AppendScopeIfNecessary(uint8_t* string, int32_t stringLength, uint32_t scope)
+{
+    assert(scope != 0);
+
+    // Find the scope ID, if it exists
+    int i;
+    for (i = 0; i < stringLength && string[i] != '\0'; i++)
+    {
+        if (string[i] == '%')
+        {
+            // Found a scope ID. Assume it's correct and return.
+            return;
+        }
+    }
+
+    auto capacity = static_cast<size_t>(stringLength - i);
+    int n = snprintf(reinterpret_cast<char*>(&string[i]), capacity, "%%%d", scope);
+    assert(static_cast<size_t>(n) < capacity);
+    (void)n; // Silence an unused variable warning in release mode
+}
+
+extern "C" int32_t IPAddressToString(
+    const uint8_t* address, int32_t addressLength, bool isIPv6, uint8_t* string, int32_t stringLength, uint32_t scope)
 {
     assert(address != nullptr);
     assert((addressLength == NUM_BYTES_IN_IPV6_ADDRESS) || (addressLength == NUM_BYTES_IN_IPV4_ADDRESS));
@@ -215,39 +266,41 @@ extern "C" int32_t IPAddressToString(const uint8_t* address,
     // These constants differ per platform so the managed side uses the bigger value; therefore, check that
     // the length is between the two lengths
     assert((stringLength >= INET_ADDRSTRLEN) && (stringLength <= INET6_ADDRSTRLEN_MANAGED));
-    (void)addressLength;            // Silence compiler warnings about unused variables on release mode
-    (void)INET6_ADDRSTRLEN_MANAGED; // Silence compiler warnings about unused variables on release mode
 
-    int32_t result;
     socklen_t len = UnsignedCast(stringLength);
 
-    if (isIPv6)
-    {
-        sockaddr_in6 addr = {.sin6_scope_id = scope};
+    sockaddr_in inAddr;
+    sockaddr_in6 in6Addr;
+    const sockaddr* addr;
+    socklen_t addrLen;
 
-        ConvertByteArrayToV6SockAddrIn(addr, address, addressLength);
-        result = getnameinfo(reinterpret_cast<const sockaddr*>(&addr),
-                             sizeof(sockaddr_in6),
-                             reinterpret_cast<char*>(string),
-                             len,
-                             nullptr,
-                             0,
-                             NI_NUMERICHOST);
+    if (!isIPv6)
+    {
+        ConvertByteArrayToSockAddrIn(inAddr, address, addressLength);
+        addr = reinterpret_cast<const sockaddr*>(&inAddr);
+        addrLen = sizeof(inAddr);
     }
     else
     {
-        sockaddr_in addr = {};
-        ConvertByteArrayToSockAddrIn(addr, address, addressLength);
-        result = getnameinfo(reinterpret_cast<const sockaddr*>(&addr),
-                             sizeof(sockaddr_in),
-                             reinterpret_cast<char*>(string),
-                             len,
-                             nullptr,
-                             0,
-                             NI_NUMERICHOST);
+        in6Addr.sin6_scope_id = scope;
+        ConvertByteArrayToSockAddrIn6(in6Addr, address, addressLength);
+        addr = reinterpret_cast<const sockaddr*>(&in6Addr);
+        addrLen = sizeof(in6Addr);
     }
 
-    return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(result);
+    int result = getnameinfo(addr, addrLen, reinterpret_cast<char*>(string), len, nullptr, 0, NI_NUMERICHOST);
+    if (result != 0)
+    {
+        return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(result);
+    }
+
+    // Some platforms do not append unknown scope IDs, but the managed code wants this behavior.
+    if (isIPv6 && scope != 0)
+    {
+        AppendScopeIfNecessary(string, stringLength, scope);
+    }
+
+    return 0;
 }
 
 extern "C" int32_t GetHostEntryForName(const uint8_t* address, HostEntry* entry)
@@ -267,7 +320,11 @@ extern "C" int32_t GetHostEntryForName(const uint8_t* address, HostEntry* entry)
         return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(result);
     }
 
-    *entry = {.CanonicalName = nullptr, .AddressListHandle = reinterpret_cast<void*>(info), .IPAddressCount = 0};
+    *entry = {.CanonicalName = nullptr,
+              .Aliases = nullptr,
+              .AddressListHandle = reinterpret_cast<void*>(info),
+              .IPAddressCount = 0,
+              .HandleType = HOST_ENTRY_HANDLE_ADDRINFO};
 
     // Find the canonical name for this host (if any) and count the number of IP end points.
     for (addrinfo* ai = info; ai != nullptr; ai = ai->ai_next)
@@ -287,15 +344,210 @@ extern "C" int32_t GetHostEntryForName(const uint8_t* address, HostEntry* entry)
     return PAL_EAI_SUCCESS;
 }
 
-extern "C" int32_t GetNextIPAddress(void** addressListHandle, IPAddress* endPoint)
+static int ConvertGetHostErrorPlatformToPal(int error)
 {
-    if (addressListHandle == nullptr || endPoint == nullptr)
+    switch (error)
     {
-        return PAL_EAI_BADARG;
+        case HOST_NOT_FOUND:
+            return PAL_HOST_NOT_FOUND;
+
+        case TRY_AGAIN:
+            return PAL_TRY_AGAIN;
+
+        case NO_RECOVERY:
+            return PAL_NO_RECOVERY;
+
+        case NO_DATA:
+            return PAL_NO_DATA;
+
+        default:
+            assert(false && "Unknown gethostbyname/gethostbyaddr error code");
+            return PAL_HOST_NOT_FOUND;
+    }
+}
+
+static void ConvertHostEntPlatformToPal(HostEntry& hostEntry, hostent& entry)
+{
+    hostEntry = {.CanonicalName = reinterpret_cast<uint8_t*>(entry.h_name),
+                 .Aliases = reinterpret_cast<uint8_t**>(entry.h_aliases),
+                 .AddressListHandle = reinterpret_cast<void*>(&entry),
+                 .IPAddressCount = 0,
+                 .HandleType = HOST_ENTRY_HANDLE_HOSTENT};
+
+    for (int i = 0; entry.h_addr_list[i] != nullptr; i++)
+    {
+        hostEntry.IPAddressCount++;
+    }
+}
+
+#if HAVE_GETHOSTBYNAME_R
+static int GetHostByNameHelper(const uint8_t* hostname, hostent** entry)
+{
+    assert(hostname != nullptr);
+    assert(entry != nullptr);
+
+    size_t scratchLen = 512;
+
+    for (;;)
+    {
+        uint8_t* buffer = reinterpret_cast<uint8_t*>(malloc(sizeof(hostent) + scratchLen));
+        if (buffer == nullptr)
+        {
+            return PAL_NO_MEM;
+        }
+
+        hostent* result = reinterpret_cast<hostent*>(buffer);
+        char* scratch = reinterpret_cast<char*>(&buffer[sizeof(hostent)]);
+
+        int getHostErrno;
+        int err =
+            gethostbyname_r(reinterpret_cast<const char*>(hostname), result, scratch, scratchLen, entry, &getHostErrno);
+        switch (err)
+        {
+            case 0:
+                *entry = result;
+                return 0;
+
+            case ERANGE:
+                free(buffer);
+                scratchLen *= 2;
+                break;
+
+            default:
+                free(buffer);
+                *entry = nullptr;
+                return getHostErrno;
+        }
+    }
+}
+#endif
+
+extern "C" int32_t GetHostByName(const uint8_t* hostname, HostEntry* entry)
+{
+    if (hostname == nullptr || entry == nullptr)
+    {
+        return PAL_BAD_ARG;
     }
 
-    auto* ai = reinterpret_cast<addrinfo*>(*addressListHandle);
-    for (; ai != nullptr; ai = ai->ai_next)
+    hostent* hostEntry = nullptr;
+    int error = 0;
+
+#if HAVE_THREAD_SAFE_GETHOSTBYNAME_AND_GETHOSTBYADDR
+    hostEntry = gethostbyname(reinterpret_cast<const char*>(hostname));
+    error = h_errno;
+#elif HAVE_GETHOSTBYNAME_R
+    error = GetHostByNameHelper(hostname, &hostEntry);
+#else
+#error Platform does not provide thread-safe gethostbyname
+#endif
+
+    if (hostEntry == nullptr)
+    {
+        return ConvertGetHostErrorPlatformToPal(error);
+    }
+
+    ConvertHostEntPlatformToPal(*entry, *hostEntry);
+    return PAL_SUCCESS;
+}
+
+#if HAVE_GETHOSTBYADDR_R
+static int GetHostByAddrHelper(const uint8_t* addr, const socklen_t addrLen, int type, hostent** entry)
+{
+    assert(addr != nullptr);
+    assert(addrLen >= 0);
+    assert(entry != nullptr);
+
+    size_t scratchLen = 512;
+
+    for (;;)
+    {
+        uint8_t* buffer = reinterpret_cast<uint8_t*>(malloc(sizeof(hostent) + scratchLen));
+        if (buffer == nullptr)
+        {
+            return PAL_NO_MEM;
+        }
+
+        hostent* result = reinterpret_cast<hostent*>(buffer);
+        char* scratch = reinterpret_cast<char*>(&buffer[sizeof(hostent)]);
+
+        int getHostErrno;
+        int err = gethostbyaddr_r(addr, addrLen, type, result, scratch, scratchLen, entry, &getHostErrno);
+        switch (err)
+        {
+            case 0:
+                *entry = result;
+                return 0;
+
+            case ERANGE:
+                free(buffer);
+                scratchLen *= 2;
+                break;
+
+            default:
+                free(buffer);
+                *entry = nullptr;
+                return getHostErrno;
+        }
+    }
+}
+#endif
+
+extern "C" int32_t GetHostByAddress(const IPAddress* address, HostEntry* entry)
+{
+    if (address == nullptr || entry == nullptr)
+    {
+        return PAL_BAD_ARG;
+    }
+
+    uint8_t* addr = nullptr;
+    socklen_t addrLen = 0;
+    int type = AF_UNSPEC;
+
+    in_addr inAddr = {};
+    in6_addr in6Addr = {};
+
+    if (!address->IsIPv6)
+    {
+        ConvertByteArrayToInAddr(inAddr, address->Address, NUM_BYTES_IN_IPV4_ADDRESS);
+        addr = reinterpret_cast<uint8_t*>(&inAddr);
+        addrLen = sizeof(inAddr);
+        type = AF_INET;
+    }
+    else
+    {
+        ConvertByteArrayToIn6Addr(in6Addr, address->Address, NUM_BYTES_IN_IPV6_ADDRESS);
+        addr = reinterpret_cast<uint8_t*>(&in6Addr);
+        addrLen = sizeof(in6Addr);
+        type = AF_INET6;
+    }
+
+    hostent* hostEntry = nullptr;
+    int error = 0;
+
+#if HAVE_THREAD_SAFE_GETHOSTBYNAME_AND_GETHOSTBYADDR
+    hostEntry = gethostbyaddr(addr, addrLen, type);
+    error = h_errno;
+#elif HAVE_GETHOSTBYADDR_R
+    error = GetHostByAddrHelper(addr, addrLen, type, &hostEntry);
+#else
+#error Platform does not provide thread-safe gethostbyname
+#endif
+
+    if (hostEntry == nullptr)
+    {
+        return ConvertGetHostErrorPlatformToPal(error);
+    }
+
+    ConvertHostEntPlatformToPal(*entry, *hostEntry);
+    return PAL_SUCCESS;
+}
+
+static int32_t GetNextIPAddressFromAddrInfo(addrinfo** info, IPAddress* endPoint)
+{
+    assert(info != nullptr);
+    assert(endPoint != nullptr);
+
+    for (addrinfo* ai = *info; ai != nullptr; ai = ai->ai_next)
     {
         switch (ai->ai_family)
         {
@@ -323,19 +575,97 @@ extern "C" int32_t GetNextIPAddress(void** addressListHandle, IPAddress* endPoin
                 continue;
         }
 
-        *addressListHandle = reinterpret_cast<void*>(ai->ai_next);
+        *info = ai->ai_next;
         return PAL_EAI_SUCCESS;
     }
 
     return PAL_EAI_NOMORE;
 }
 
+static int32_t GetNextIPAddressFromHostEnt(hostent** hostEntry, IPAddress* address)
+{
+    assert(hostEntry != nullptr);
+    assert(address != nullptr);
+
+    hostent* entry = *hostEntry;
+    if (*entry->h_addr_list == nullptr)
+    {
+        return PAL_EAI_NOMORE;
+    }
+
+    switch (entry->h_addrtype)
+    {
+        case AF_INET:
+        {
+            auto* inAddr = reinterpret_cast<in_addr*>(entry->h_addr_list[0]);
+
+            ConvertInAddrToByteArray(address->Address, NUM_BYTES_IN_IPV4_ADDRESS, *inAddr);
+            address->IsIPv6 = 0;
+            break;
+        }
+
+        case AF_INET6:
+        {
+            auto* in6Addr = reinterpret_cast<in6_addr*>(entry->h_addr_list[0]);
+
+            ConvertIn6AddrToByteArray(address->Address, NUM_BYTES_IN_IPV6_ADDRESS, *in6Addr);
+            address->IsIPv6 = 1;
+            address->ScopeId = 0;
+            break;
+        }
+
+        default:
+            return PAL_EAI_NOMORE;
+    }
+
+    entry->h_addr_list = &entry->h_addr_list[1];
+    return PAL_EAI_SUCCESS;
+}
+
+extern "C" int32_t GetNextIPAddress(const HostEntry* hostEntry, void** addressListHandle, IPAddress* endPoint)
+{
+    if (hostEntry == nullptr || addressListHandle == nullptr || endPoint == nullptr)
+    {
+        return PAL_EAI_BADARG;
+    }
+
+    switch (hostEntry->HandleType)
+    {
+        case HOST_ENTRY_HANDLE_ADDRINFO:
+            return GetNextIPAddressFromAddrInfo(reinterpret_cast<addrinfo**>(addressListHandle), endPoint);
+
+        case HOST_ENTRY_HANDLE_HOSTENT:
+            return GetNextIPAddressFromHostEnt(reinterpret_cast<hostent**>(addressListHandle), endPoint);
+
+        default:
+            return PAL_EAI_BADARG;
+    }
+}
+
 extern "C" void FreeHostEntry(HostEntry* entry)
 {
     if (entry != nullptr)
     {
-        auto* ai = reinterpret_cast<addrinfo*>(entry->AddressListHandle);
-        freeaddrinfo(ai);
+        switch (entry->HandleType)
+        {
+            case HOST_ENTRY_HANDLE_ADDRINFO:
+            {
+                auto* ai = reinterpret_cast<addrinfo*>(entry->AddressListHandle);
+                freeaddrinfo(ai);
+                break;
+            }
+
+            case HOST_ENTRY_HANDLE_HOSTENT:
+            {
+#if !HAVE_THREAD_SAFE_GETHOSTBYNAME_AND_GETHOSTBYADDR
+                free(entry->AddressListHandle);
+#endif
+                break;
+            }
+
+            default:
+                break;
+        }
     }
 }
 
@@ -374,7 +704,7 @@ extern "C" int32_t GetNameInfo(const uint8_t* address,
     if (isIPv6)
     {
         sockaddr_in6 addr = {};
-        ConvertByteArrayToV6SockAddrIn(addr, address, addressLength);
+        ConvertByteArrayToSockAddrIn6(addr, address, addressLength);
         result = getnameinfo(reinterpret_cast<const sockaddr*>(&addr),
                              sizeof(sockaddr_in6),
                              reinterpret_cast<char*>(host),
@@ -397,6 +727,20 @@ extern "C" int32_t GetNameInfo(const uint8_t* address,
     }
 
     return ConvertGetAddrInfoAndGetNameInfoErrorsToPal(result);
+}
+
+extern "C" int32_t GetDomainName(uint8_t* name, int32_t nameLength)
+{
+    assert(name != nullptr);
+    assert(nameLength > 0);
+
+#if HAVE_GETDOMAINNAME_SIZET
+    size_t namelen = UnsignedCast(nameLength);
+#else
+    int namelen = nameLength;
+#endif
+
+    return getdomainname(reinterpret_cast<char*>(name), namelen);
 }
 
 extern "C" int32_t GetHostName(uint8_t* name, int32_t nameLength)
@@ -702,7 +1046,7 @@ SetIPv6Address(uint8_t* socketAddress, int32_t socketAddressLen, uint8_t* addres
     }
 
     auto* inet6SockAddr = reinterpret_cast<sockaddr_in6*>(sockAddr);
-    ConvertByteArrayToV6SockAddrIn(*inet6SockAddr, address, addressLen);
+    ConvertByteArrayToSockAddrIn6(*inet6SockAddr, address, addressLen);
     inet6SockAddr->sin6_family = AF_INET6;
     inet6SockAddr->sin6_flowinfo = 0;
     inet6SockAddr->sin6_scope_id = scopeId;
@@ -743,7 +1087,15 @@ static int32_t GetIPv4PacketInformation(cmsghdr* controlMessage, IPPacketInforma
 
     auto* pktinfo = reinterpret_cast<in_pktinfo*>(CMSG_DATA(controlMessage));
     ConvertInAddrToByteArray(&packetInfo->Address.Address[0], NUM_BYTES_IN_IPV4_ADDRESS, pktinfo->ipi_addr);
+#if HAVE_IN_PKTINFO
     packetInfo->InterfaceIndex = static_cast<int32_t>(pktinfo->ipi_ifindex);
+#else
+    // TODO: Figure out how to get interface index with in_addr.
+    // One option is http://www.unix.com/man-page/freebsd/3/if_nametoindex
+    // which requires interface name to be known.
+    // Meanwhile:
+    packetInfo->InterfaceIndex = 0;
+#endif
 
     return 1;
 }
@@ -781,7 +1133,8 @@ TryGetIPPacketInformation(MessageHeader* messageHeader, int32_t isIPv4, IPPacket
     cmsghdr* controlMessage = CMSG_FIRSTHDR(&header);
     if (isIPv4 != 0)
     {
-        for (; controlMessage != nullptr; controlMessage = CMSG_NXTHDR(&header, controlMessage))
+        for (; controlMessage != nullptr && controlMessage->cmsg_len > 0;
+             controlMessage = CMSG_NXTHDR(&header, controlMessage))
         {
             if (controlMessage->cmsg_level == IPPROTO_IP && controlMessage->cmsg_type == IP_PKTINFO)
             {
@@ -791,7 +1144,8 @@ TryGetIPPacketInformation(MessageHeader* messageHeader, int32_t isIPv4, IPPacket
     }
     else
     {
-        for (; controlMessage != nullptr; controlMessage = CMSG_NXTHDR(&header, controlMessage))
+        for (; controlMessage != nullptr && controlMessage->cmsg_len > 0;
+             controlMessage = CMSG_NXTHDR(&header, controlMessage))
         {
             if (controlMessage->cmsg_level == IPPROTO_IPV6 && controlMessage->cmsg_type == IPV6_PKTINFO)
             {
@@ -913,6 +1267,43 @@ extern "C" Error SetIPv6MulticastOption(int32_t socket, int32_t multicastOption,
     return err == 0 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
 
+#if defined(__APPLE__) && __APPLE__
+static int32_t GetMaxLingerTime()
+{
+    static volatile int32_t MaxLingerTime = -1;
+    static_assert(sizeof(xsocket::so_linger) == 2, "");
+
+    // OS X does not define the linger time in seconds by default, but in ticks.
+    // Furthermore, when SO_LINGER_SEC is used, the value is simply scaled by
+    // the number of ticks per second and then the result is used to set the
+    // underlying linger time. Unfortunately, the underlying linger time is
+    // stored as a `short` and out-of-range values are simply truncated to fit
+    // within 16 bits and then reinterpreted as 2's complement signed integers.
+    // This results in some *very* strange behavior and a rather low limit for
+    // the linger time. Instead of admitting this behavior, we determine the
+    // maximum linger time in seconds and return an error if the input is out
+    // of range.
+    int32_t maxLingerTime = MaxLingerTime;
+    if (maxLingerTime == -1)
+    {
+        long ticksPerSecond = sysconf(_SC_CLK_TCK);
+        maxLingerTime = static_cast<int32_t>(32767 / ticksPerSecond);
+        MaxLingerTime = maxLingerTime;
+    }
+
+    return maxLingerTime;
+}
+#else
+constexpr int32_t GetMaxLingerTime()
+{
+    // On other platforms, the maximum linger time is locked to the smaller of
+    // 65535 (the maximum time for winsock) and the maximum signed value that
+    // will fit in linger::l_linger.
+
+    return Min(65535U, (1U << (sizeof(linger::l_linger) * 8 - 1)) - 1);
+}
+#endif
+
 extern "C" Error GetLingerOption(int32_t socket, LingerOption* option)
 {
     if (option == nullptr)
@@ -922,7 +1313,7 @@ extern "C" Error GetLingerOption(int32_t socket, LingerOption* option)
 
     linger opt;
     socklen_t len = sizeof(opt);
-    int err = getsockopt(socket, SOL_SOCKET, SO_LINGER, &opt, &len);
+    int err = getsockopt(socket, SOL_SOCKET, LINGER_OPTION_NAME, &opt, &len);
     if (err != 0)
     {
         return ConvertErrorPlatformToPal(errno);
@@ -939,18 +1330,19 @@ extern "C" Error SetLingerOption(int32_t socket, LingerOption* option)
         return PAL_EFAULT;
     }
 
+    if (option->OnOff != 0 && (option->Seconds < 0 || option->Seconds > GetMaxLingerTime()))
+    {
+        return PAL_EINVAL;
+    }
+
     linger opt = {.l_onoff = option->OnOff, .l_linger = option->Seconds};
-    int err = setsockopt(socket, SOL_SOCKET, SO_LINGER, &opt, sizeof(opt));
+    int err = setsockopt(socket, SOL_SOCKET, LINGER_OPTION_NAME, &opt, sizeof(opt));
     return err == 0 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
 
 static bool ConvertSocketFlagsPalToPlatform(int32_t palFlags, int& platformFlags)
 {
-    const int32_t SupportedFlagsMask = PAL_MSG_OOB |
-        PAL_MSG_PEEK |
-        PAL_MSG_DONTROUTE |
-        PAL_MSG_TRUNC |
-        PAL_MSG_CTRUNC;
+    const int32_t SupportedFlagsMask = PAL_MSG_OOB | PAL_MSG_PEEK | PAL_MSG_DONTROUTE | PAL_MSG_TRUNC | PAL_MSG_CTRUNC;
 
     if ((palFlags & ~SupportedFlagsMask) != 0)
     {
@@ -958,30 +1350,24 @@ static bool ConvertSocketFlagsPalToPlatform(int32_t palFlags, int& platformFlags
         return false;
     }
 
-    platformFlags = ((palFlags & PAL_MSG_OOB) == 0 ? 0 : MSG_OOB) |
-        ((palFlags & PAL_MSG_PEEK) == 0 ? 0 : MSG_PEEK) |
-        ((palFlags & PAL_MSG_DONTROUTE) == 0 ? 0 : MSG_DONTROUTE) |
-        ((palFlags & PAL_MSG_TRUNC) == 0 ? 0 : MSG_TRUNC) |
-        ((palFlags & PAL_MSG_CTRUNC) == 0 ? 0 : MSG_CTRUNC);
+    platformFlags = ((palFlags & PAL_MSG_OOB) == 0 ? 0 : MSG_OOB) | ((palFlags & PAL_MSG_PEEK) == 0 ? 0 : MSG_PEEK) |
+                    ((palFlags & PAL_MSG_DONTROUTE) == 0 ? 0 : MSG_DONTROUTE) |
+                    ((palFlags & PAL_MSG_TRUNC) == 0 ? 0 : MSG_TRUNC) |
+                    ((palFlags & PAL_MSG_CTRUNC) == 0 ? 0 : MSG_CTRUNC);
 
     return true;
 }
 
 static int32_t ConvertSocketFlagsPlatformToPal(int platformFlags)
 {
-    const int SupportedFlagsMask = MSG_OOB |
-        MSG_PEEK |
-        MSG_DONTROUTE |
-        MSG_TRUNC |
-        MSG_CTRUNC;
+    const int SupportedFlagsMask = MSG_OOB | MSG_PEEK | MSG_DONTROUTE | MSG_TRUNC | MSG_CTRUNC;
 
     platformFlags &= SupportedFlagsMask;
 
-    return ((platformFlags & MSG_OOB) == 0 ? 0 : PAL_MSG_OOB) |
-        ((platformFlags & MSG_PEEK) == 0 ? 0 : PAL_MSG_PEEK) |
-        ((platformFlags & MSG_DONTROUTE) == 0 ? 0 : PAL_MSG_DONTROUTE) |
-        ((platformFlags & MSG_TRUNC) == 0 ? 0 : PAL_MSG_TRUNC) |
-        ((platformFlags & MSG_CTRUNC) == 0 ? 0 : PAL_MSG_CTRUNC);
+    return ((platformFlags & MSG_OOB) == 0 ? 0 : PAL_MSG_OOB) | ((platformFlags & MSG_PEEK) == 0 ? 0 : PAL_MSG_PEEK) |
+           ((platformFlags & MSG_DONTROUTE) == 0 ? 0 : PAL_MSG_DONTROUTE) |
+           ((platformFlags & MSG_TRUNC) == 0 ? 0 : PAL_MSG_TRUNC) |
+           ((platformFlags & MSG_CTRUNC) == 0 ? 0 : PAL_MSG_CTRUNC);
 }
 
 extern "C" Error ReceiveMessage(int32_t socket, MessageHeader* messageHeader, int32_t flags, int64_t* received)
@@ -1395,7 +1781,8 @@ static bool TryGetPlatformSocketOption(int32_t socketOptionName, int32_t socketO
     }
 }
 
-extern "C" Error GetSockOpt(int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t* optionLen)
+extern "C" Error GetSockOpt(
+    int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t* optionLen)
 {
     if (optionLen == nullptr || *optionLen < 0)
     {
@@ -1420,7 +1807,8 @@ extern "C" Error GetSockOpt(int32_t socket, int32_t socketOptionLevel, int32_t s
     return PAL_SUCCESS;
 }
 
-extern "C" Error SetSockOpt(int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t optionLen)
+extern "C" Error
+SetSockOpt(int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t optionLen)
 {
     if (optionLen < 0)
     {
@@ -1444,7 +1832,7 @@ static bool TryConvertSocketTypePalToPlatform(int32_t palSocketType, int* platfo
     switch (palSocketType)
     {
         case PAL_SOCK_STREAM:
-           *platformSocketType = SOCK_STREAM;
+            *platformSocketType = SOCK_STREAM;
             return true;
 
         case PAL_SOCK_DGRAM:
@@ -1462,10 +1850,10 @@ static bool TryConvertSocketTypePalToPlatform(int32_t palSocketType, int* platfo
         case PAL_SOCK_SEQPACKET:
             *platformSocketType = SOCK_SEQPACKET;
             return true;
- 
+
         default:
             *platformSocketType = static_cast<int>(palSocketType);
-            return false;           
+            return false;
     }
 }
 
@@ -1475,12 +1863,20 @@ static bool TryConvertProtocolTypePalToPlatform(int32_t palProtocolType, int* pl
 
     switch (palProtocolType)
     {
+        case PAL_PT_ICMP:
+            *platformProtocolType = IPPROTO_ICMP;
+            return true;
+
         case PAL_PT_TCP:
             *platformProtocolType = IPPROTO_TCP;
             return true;
 
         case PAL_PT_UDP:
             *platformProtocolType = IPPROTO_UDP;
+            return true;
+
+        case PAL_PT_ICMPV6:
+            *platformProtocolType = IPPROTO_ICMPV6;
             return true;
 
         default:
@@ -1521,48 +1917,23 @@ extern "C" Error Socket(int32_t addressFamily, int32_t socketType, int32_t proto
     return *createdSocket != -1 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
 
-static void ConvertFdSetPlatformToPal(FdSet& palSet, fd_set& platformSet, int32_t fdCount)
+const int FD_SETSIZE_BYTES = FD_SETSIZE / 8;
+
+#if !HAVE_FDS_BITS && !HAVE_PRIVATE_FDS_BITS
+const int FD_SETSIZE_UINTS = FD_SETSIZE_BYTES / sizeof(uint32_t);
+#endif
+
+static void ConvertFdSetPlatformToPal(uint32_t* palSet, fd_set& platformSet, int32_t fdCount)
 {
     assert(fdCount >= 0);
+
+    memset(palSet, 0, FD_SETSIZE_BYTES);
 
 #if !HAVE_FDS_BITS && !HAVE_PRIVATE_FDS_BITS
     for (int i = 0; i < fdCount; i++)
     {
-        int word = i / static_cast<int>(PAL_FDSET_NFD_BITS);
-        int bit = i % static_cast<int>(PAL_FDSET_NFD_BITS);
-        if ((palSet.Bits[word] & (1 << bit)) == 0)
-        {
-            FD_SET(i, &platformSet);
-        }
-        else
-        {
-            FD_CLR(i, &platformSet);
-        }
-    }
-#else
-
-    size_t bytesToCopy = static_cast<size_t>((fdCount / 8) + ((fdCount % 8) == 0 ? 1 : 0));
-
-    uint8_t* dest;
-#if HAVE_FDS_BITS
-    dest = reinterpret_cast<uint8_t*>(&platformSet.fds_bits[0]);
-#elif HAVE_PRIVATE_FDS_BITS
-    dest = reinterpret_cast<uint8_t*>(&platformSet.__fds_bits[0]);
-#endif
-
-    memcpy(dest, &palSet.Bits[0], bytesToCopy);
-#endif
-}
-
-static void ConvertFdSetPalToPlatform(fd_set& platformSet, FdSet& palSet, int32_t fdCount)
-{
-    assert(fdCount >= 0);
-
-#if !HAVE_FDS_BITS && !HAVE_PRIVATE_FDS_BITS
-    for (int i = 0; i < fdCount; i++)
-    {
-        uint32_t* word = &palSet.Bits[i / static_cast<int>(PAL_FDSET_NFD_BITS)];
-        uint32_t mask = 1 << (i % static_cast<int>(PAL_FDSET_NFD_BITS));
+        uint32_t* word = &palSet[i / FD_SETSIZE_UINTS];
+        uint32_t mask = 1 << (i % FD_SETSIZE_UINTS);
 
         if (FD_ISSET(i, &platformSet))
         {
@@ -1574,7 +1945,7 @@ static void ConvertFdSetPalToPlatform(fd_set& platformSet, FdSet& palSet, int32_
         }
     }
 #else
-    size_t bytesToCopy = static_cast<size_t>((fdCount / 8) + ((fdCount % 8) == 0 ? 1 : 0));
+    size_t bytesToCopy = static_cast<size_t>((fdCount / 8) + ((fdCount % 8) != 0 ? 1 : 0));
 
     uint8_t* source;
 #if HAVE_FDS_BITS
@@ -1583,18 +1954,59 @@ static void ConvertFdSetPalToPlatform(fd_set& platformSet, FdSet& palSet, int32_
     source = reinterpret_cast<uint8_t*>(&platformSet.__fds_bits[0]);
 #endif
 
-    memcpy(&palSet.Bits[0], source, bytesToCopy);
+    memcpy(palSet, source, bytesToCopy);
 #endif
 }
 
-extern "C" Error Select(int32_t fdCount, FdSet* readFdSet, FdSet* writeFdSet, FdSet* errorFdSet, int32_t microseconds, int32_t* selected)
+static void ConvertFdSetPalToPlatform(fd_set& platformSet, uint32_t* palSet, int32_t fdCount)
+{
+    assert(fdCount >= 0);
+
+    memset(&platformSet, 0, sizeof(platformSet));
+
+#if !HAVE_FDS_BITS && !HAVE_PRIVATE_FDS_BITS
+    for (int i = 0; i < fdCount; i++)
+    {
+        int word = i / FD_SETSIZE_UINTS;
+        int bit = i % FD_SETSIZE_UINTS;
+        if ((palSet[word] & (1 << bit)) == 0)
+        {
+            FD_CLR(i, &platformSet);
+        }
+        else
+        {
+            FD_SET(i, &platformSet);
+        }
+    }
+#else
+
+    size_t bytesToCopy = static_cast<size_t>((fdCount / 8) + ((fdCount % 8) != 0 ? 1 : 0));
+
+    uint8_t* dest;
+#if HAVE_FDS_BITS
+    dest = reinterpret_cast<uint8_t*>(&platformSet.fds_bits[0]);
+#elif HAVE_PRIVATE_FDS_BITS
+    dest = reinterpret_cast<uint8_t*>(&platformSet.__fds_bits[0]);
+#endif
+
+    memcpy(dest, palSet, bytesToCopy);
+#endif
+}
+
+extern "C" int32_t FdSetSize()
+{
+    return FD_SETSIZE;
+}
+
+extern "C" Error
+Select(int32_t fdCount, uint32_t* readFdSet, uint32_t* writeFdSet, uint32_t* errorFdSet, int32_t microseconds, int32_t* selected)
 {
     if (selected == nullptr)
     {
         return PAL_EFAULT;
     }
 
-    if (fdCount < 0 || fdCount > PAL_FDSET_MAX_FDS || microseconds < -1)
+    if (fdCount < 0 || static_cast<uint32_t>(fdCount) >= FD_SETSIZE || microseconds < -1)
     {
         return PAL_EINVAL;
     }
@@ -1608,19 +2020,19 @@ extern "C" Error Select(int32_t fdCount, FdSet* readFdSet, FdSet* writeFdSet, Fd
     if (readFdSet != nullptr)
     {
         readFds = reinterpret_cast<fd_set*>(alloca(sizeof(fd_set)));
-        ConvertFdSetPalToPlatform(*readFds, *readFdSet, fdCount);
+        ConvertFdSetPalToPlatform(*readFds, readFdSet, fdCount);
     }
 
     if (writeFdSet != nullptr)
     {
         writeFds = reinterpret_cast<fd_set*>(alloca(sizeof(fd_set)));
-        ConvertFdSetPalToPlatform(*writeFds, *writeFdSet, fdCount);
+        ConvertFdSetPalToPlatform(*writeFds, writeFdSet, fdCount);
     }
 
     if (errorFdSet != nullptr)
     {
         errorFds = reinterpret_cast<fd_set*>(alloca(sizeof(fd_set)));
-        ConvertFdSetPalToPlatform(*errorFds, *errorFdSet, fdCount);
+        ConvertFdSetPalToPlatform(*errorFds, errorFdSet, fdCount);
     }
 
     if (microseconds != -1)
@@ -1638,17 +2050,17 @@ extern "C" Error Select(int32_t fdCount, FdSet* readFdSet, FdSet* writeFdSet, Fd
 
     if (readFdSet != nullptr)
     {
-        ConvertFdSetPlatformToPal(*writeFdSet, *writeFds, fdCount);
+        ConvertFdSetPlatformToPal(readFdSet, *readFds, fdCount);
     }
 
     if (writeFdSet != nullptr)
     {
-        ConvertFdSetPlatformToPal(*writeFdSet, *writeFds, fdCount);
+        ConvertFdSetPlatformToPal(writeFdSet, *writeFds, fdCount);
     }
 
     if (errorFdSet != nullptr)
     {
-        ConvertFdSetPlatformToPal(*errorFdSet, *errorFds, fdCount);
+        ConvertFdSetPlatformToPal(errorFdSet, *errorFds, fdCount);
     }
 
     *selected = rv;
@@ -1679,22 +2091,18 @@ const size_t SocketEventBufferElementSize = Max(sizeof(epoll_event), sizeof(Sock
 
 static SocketEvents GetSocketEvents(uint32_t events)
 {
-    int asyncEvents = (((events & EPOLLIN) != 0) ? PAL_SA_READ : 0) |
-        (((events & EPOLLOUT) != 0) ? PAL_SA_WRITE : 0) |
-        (((events & EPOLLRDHUP) != 0) ? PAL_SA_READCLOSE : 0) |
-        (((events & EPOLLHUP) != 0) ? PAL_SA_CLOSE : 0) |
-        (((events & EPOLLERR) != 0) ? PAL_SA_ERROR : 0);
+    int asyncEvents = (((events & EPOLLIN) != 0) ? PAL_SA_READ : 0) | (((events & EPOLLOUT) != 0) ? PAL_SA_WRITE : 0) |
+                      (((events & EPOLLRDHUP) != 0) ? PAL_SA_READCLOSE : 0) |
+                      (((events & EPOLLHUP) != 0) ? PAL_SA_CLOSE : 0) | (((events & EPOLLERR) != 0) ? PAL_SA_ERROR : 0);
 
     return static_cast<SocketEvents>(asyncEvents);
 }
 
 static uint32_t GetEPollEvents(SocketEvents events)
 {
-     return (((events & PAL_SA_READ) != 0) ? EPOLLIN : 0) |
-        (((events & PAL_SA_WRITE) != 0) ? EPOLLOUT : 0) |
-        (((events & PAL_SA_READCLOSE) != 0) ? EPOLLRDHUP : 0) |
-        (((events & PAL_SA_CLOSE) != 0) ? EPOLLHUP : 0) |
-        (((events & PAL_SA_ERROR) != 0) ? EPOLLERR : 0);
+    return (((events & PAL_SA_READ) != 0) ? EPOLLIN : 0) | (((events & PAL_SA_WRITE) != 0) ? EPOLLOUT : 0) |
+           (((events & PAL_SA_READCLOSE) != 0) ? EPOLLRDHUP : 0) | (((events & PAL_SA_CLOSE) != 0) ? EPOLLHUP : 0) |
+           (((events & PAL_SA_ERROR) != 0) ? EPOLLERR : 0);
 }
 
 static Error CreateSocketEventPortInner(int32_t* port)
@@ -1718,7 +2126,8 @@ static Error CloseSocketEventPortInner(int32_t port)
     return err == 0 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
 
-static Error TryChangeSocketEventRegistrationInner(int32_t port, int32_t socket, SocketEvents currentEvents, SocketEvents newEvents, uintptr_t data)
+static Error TryChangeSocketEventRegistrationInner(
+    int32_t port, int32_t socket, SocketEvents currentEvents, SocketEvents newEvents, uintptr_t data)
 {
     assert(currentEvents != newEvents);
 
@@ -1732,10 +2141,7 @@ static Error TryChangeSocketEventRegistrationInner(int32_t port, int32_t socket,
         op = EPOLL_CTL_DEL;
     }
 
-    epoll_event evt = {
-        .events = GetEPollEvents(newEvents) | EPOLLET,
-        .data = { .ptr = reinterpret_cast<void*>(data) }
-    };
+    epoll_event evt = {.events = GetEPollEvents(newEvents) | EPOLLET, .data = {.ptr = reinterpret_cast<void*>(data)}};
     int err = epoll_ctl(port, op, socket, &evt);
     return err == 0 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
@@ -1755,10 +2161,7 @@ static void ConvertEventEPollToSocketAsync(SocketEvent* sae, epoll_event* epoll)
         events = (events & ~EPOLLHUP) | EPOLLIN | EPOLLOUT;
     }
 
-    *sae = {
-        .Data = reinterpret_cast<uintptr_t>(epoll->data.ptr),
-        .Events = GetSocketEvents(events)
-    };
+    *sae = {.Data = reinterpret_cast<uintptr_t>(epoll->data.ptr), .Events = GetSocketEvents(events)};
 }
 
 static Error WaitForSocketEventsInner(int32_t port, SocketEvent* buffer, int32_t* count)
@@ -1809,8 +2212,8 @@ static Error WaitForSocketEventsInner(int32_t port, SocketEvent* buffer, int32_t
 
 #elif HAVE_KQUEUE
 
-static_assert(sizeof(SocketEvent) <= sizeof(kevent64_s), "");
-const size_t SocketEventBufferElementSize = sizeof(kevent64_s);
+static_assert(sizeof(SocketEvent) <= sizeof(struct kevent), "");
+const size_t SocketEventBufferElementSize = sizeof(struct kevent);
 
 static SocketEvents GetSocketEvents(int16_t filter, uint16_t flags)
 {
@@ -1872,7 +2275,8 @@ static Error CloseSocketEventPortInner(int32_t port)
     return err == 0 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
 
-static Error TryChangeSocketEventRegistrationInner(int32_t port, int32_t socket, SocketEvents currentEvents, SocketEvents newEvents, uintptr_t data)
+static Error TryChangeSocketEventRegistrationInner(
+    int32_t port, int32_t socket, SocketEvents currentEvents, SocketEvents newEvents, uintptr_t data)
 {
     const uint16_t AddFlags = EV_ADD | EV_CLEAR | EV_RECEIPT;
     const uint16_t RemoveFlags = EV_DELETE | EV_RECEIPT;
@@ -1883,30 +2287,32 @@ static Error TryChangeSocketEventRegistrationInner(int32_t port, int32_t socket,
     bool readChanged = (changes & PAL_SA_READ) != 0;
     bool writeChanged = (changes & PAL_SA_WRITE) != 0;
 
-    kevent64_s events[2];
+    struct kevent events[2];
 
     int i = 0;
     if (readChanged)
     {
-        events[i++] =  {
-            .ident = static_cast<uint64_t>(socket),
-            .filter = EVFILT_READ,
-            .flags = (newEvents & PAL_SA_READ) == 0 ? RemoveFlags : AddFlags,
-            .udata = data
-        };
+        EV_SET(&events[i++],
+               static_cast<uint64_t>(socket),
+               EVFILT_READ,
+               (newEvents & PAL_SA_READ) == 0 ? RemoveFlags : AddFlags,
+               0,
+               0,
+               reinterpret_cast<void*>(data));
     }
 
     if (writeChanged)
     {
-        events[i++] = {
-            .ident = static_cast<uint64_t>(socket),
-            .filter = EVFILT_WRITE,
-            .flags = (newEvents & PAL_SA_WRITE) == 0 ? RemoveFlags : AddFlags,
-            .udata = data
-        };
+        EV_SET(&events[i++],
+               static_cast<uint64_t>(socket),
+               EVFILT_WRITE,
+               (newEvents & PAL_SA_WRITE) == 0 ? RemoveFlags : AddFlags,
+               0,
+               0,
+               reinterpret_cast<void*>(data));
     }
 
-    int err = kevent64(port, events, i, nullptr, 0, 0, nullptr);
+    int err = kevent(port, events, i, nullptr, 0, nullptr);
     return err == 0 ? PAL_SUCCESS : ConvertErrorPlatformToPal(errno);
 }
 
@@ -1916,15 +2322,15 @@ static Error WaitForSocketEventsInner(int32_t port, SocketEvent* buffer, int32_t
     assert(count != nullptr);
     assert(*count >= 0);
 
-    auto* events = reinterpret_cast<kevent64_s*>(buffer);
-    int numEvents = kevent64(port, nullptr, 0, events, *count, 0, nullptr);
+    auto* events = reinterpret_cast<struct kevent*>(buffer);
+    int numEvents = kevent(port, nullptr, 0, events, *count, nullptr);
     if (numEvents == -1)
     {
         *count = -1;
         return ConvertErrorPlatformToPal(errno);
     }
 
-    // We should never see 0 events. Given an infinite timeout, kevent64 will never return
+    // We should never see 0 events. Given an infinite timeout, kevent will never return
     // 0 events even if there are no file descriptors registered with the kqueue fd. In
     // that case, the wait will block until a file descriptor is added and an event occurs
     // on the added file descriptor.
@@ -1934,11 +2340,8 @@ static Error WaitForSocketEventsInner(int32_t port, SocketEvent* buffer, int32_t
     for (int i = 0; i < numEvents; i++)
     {
         // This copy is made deliberately to avoid overwriting data.
-        kevent64_s evt = events[i];
-        buffer[i] = {
-            .Data = static_cast<uintptr_t>(evt.udata),
-            .Events = GetSocketEvents(evt.filter, evt.flags)
-        };
+        struct kevent evt = events[i];
+        buffer[i] = {.Data = reinterpret_cast<uintptr_t>(evt.udata), .Events = GetSocketEvents(evt.filter, evt.flags)};
     }
 
     *count = numEvents;
@@ -1988,13 +2391,10 @@ extern "C" Error FreeSocketEventBuffer(SocketEvent* buffer)
     return PAL_SUCCESS;
 }
 
-extern "C" Error TryChangeSocketEventRegistration(int32_t port, int32_t socket, int32_t currentEvents, int32_t newEvents, uintptr_t data)
+extern "C" Error
+TryChangeSocketEventRegistration(int32_t port, int32_t socket, int32_t currentEvents, int32_t newEvents, uintptr_t data)
 {
-    const int32_t SupportedEvents = PAL_SA_READ |
-        PAL_SA_WRITE |
-        PAL_SA_READCLOSE |
-        PAL_SA_CLOSE |
-        PAL_SA_ERROR;
+    const int32_t SupportedEvents = PAL_SA_READ | PAL_SA_WRITE | PAL_SA_READCLOSE | PAL_SA_CLOSE | PAL_SA_ERROR;
 
     if ((currentEvents & ~SupportedEvents) != 0 || (newEvents & ~SupportedEvents) != 0)
     {
@@ -2006,7 +2406,8 @@ extern "C" Error TryChangeSocketEventRegistration(int32_t port, int32_t socket, 
         return PAL_SUCCESS;
     }
 
-    return TryChangeSocketEventRegistrationInner(port, socket, static_cast<SocketEvents>(currentEvents), static_cast<SocketEvents>(newEvents), data);
+    return TryChangeSocketEventRegistrationInner(
+        port, socket, static_cast<SocketEvents>(currentEvents), static_cast<SocketEvents>(newEvents), data);
 }
 
 extern "C" Error WaitForSocketEvents(int32_t port, SocketEvent* buffer, int32_t* count)
@@ -2021,7 +2422,7 @@ extern "C" Error WaitForSocketEvents(int32_t port, SocketEvent* buffer, int32_t*
 
 extern "C" int32_t PlatformSupportsMultipleConnectAttempts()
 {
-#if defined(PLATFORM_SUPPORTS_MULTIPLE_CONNECT_ATTEMPTS)
+#if HAVE_SUPPORT_FOR_MULTIPLE_CONNECT_ATTEMPTS
     return 1;
 #else
     return 0;
@@ -2030,7 +2431,7 @@ extern "C" int32_t PlatformSupportsMultipleConnectAttempts()
 
 extern "C" int32_t PlatformSupportsDualModeIPv4PacketInfo()
 {
-#if defined(PLATFORM_SUPPORTS_DUAL_MODE_IPV4_PACKET_INFO)
+#if HAVE_SUPPORT_FOR_DUAL_MODE_IPV4_PACKET_INFO
     return 1;
 #else
     return 0;

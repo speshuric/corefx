@@ -10,12 +10,18 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
-using CURLAUTH = Interop.libcurl.CURLAUTH;
-using CURLoption = Interop.libcurl.CURLoption;
-using CurlProtocols = Interop.libcurl.CURLPROTO_Definitions;
-using CURLProxyType = Interop.libcurl.curl_proxytype;
-using SafeCurlHandle = Interop.libcurl.SafeCurlHandle;
-using SafeCurlSlistHandle = Interop.libcurl.SafeCurlSlistHandle;
+using CURLAUTH = Interop.Http.CURLAUTH;
+using CURLcode = Interop.Http.CURLcode;
+using CURLoption = Interop.Http.CURLoption;
+using CurlProtocols = Interop.Http.CurlProtocols;
+using CURLProxyType = Interop.Http.curl_proxytype;
+using SafeCurlHandle = Interop.Http.SafeCurlHandle;
+using SafeCurlSListHandle = Interop.Http.SafeCurlSListHandle;
+using SafeCallbackHandle = Interop.Http.SafeCallbackHandle;
+using SeekCallback = Interop.Http.SeekCallback;
+using ReadWriteCallback = Interop.Http.ReadWriteCallback;
+using ReadWriteFunction = Interop.Http.ReadWriteFunction;
+using SslCtxCallback = Interop.Http.SslCtxCallback;
 
 namespace System.Net.Http
 {
@@ -30,13 +36,15 @@ namespace System.Net.Http
             internal readonly HttpContentAsyncStream _requestContentStream;
 
             internal SafeCurlHandle _easyHandle;
-            private SafeCurlSlistHandle _requestHeaders;
+            private SafeCurlSListHandle _requestHeaders;
 
             internal NetworkCredential _networkCredential;
 
             internal MultiAgent _associatedMultiAgent;
             internal SendTransferState _sendTransferState;
             internal bool _isRedirect = false;
+
+            private SafeCallbackHandle _callbackHandle;
 
             public EasyRequest(CurlHandler handler, HttpRequestMessage requestMessage, CancellationToken cancellationToken) :
                 base(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -63,7 +71,7 @@ namespace System.Net.Http
             internal void InitializeCurl()
             {
                 // Create the underlying easy handle
-                SafeCurlHandle easyHandle = Interop.libcurl.curl_easy_init();
+                SafeCurlHandle easyHandle = Interop.Http.EasyCreate();
                 if (easyHandle.IsInvalid)
                 {
                     throw new OutOfMemoryException();
@@ -76,11 +84,13 @@ namespace System.Net.Http
                 SetMultithreading();
                 SetRedirection();
                 SetVerb();
+                SetVersion();
                 SetDecompressionOptions();
                 SetProxyOptions(_requestMessage.RequestUri);
-                SetCredentialsOptions(_handler.GetNetworkCredentials(_handler._serverCredentials,_requestMessage.RequestUri));
+                SetCredentialsOptions(_handler.GetNetworkCredentials(_handler._serverCredentials, _requestMessage.RequestUri));
                 SetCookieOption(_requestMessage.RequestUri);
                 SetRequestHeaders();
+                SetSslOptions();
             }
 
             public void EnsureResponseMessagePublished()
@@ -140,13 +150,16 @@ namespace System.Net.Http
                 // doing any processing that assumes it's valid.
                 if (_requestHeaders != null)
                     _requestHeaders.Dispose();
+
+                if (_callbackHandle != null)
+                    _callbackHandle.Dispose();
             }
 
             private void SetUrl()
             {
                 VerboseTrace(_requestMessage.RequestUri.AbsoluteUri);
                 SetCurlOption(CURLoption.CURLOPT_URL, _requestMessage.RequestUri.AbsoluteUri);
-                SetCurlOption(CURLoption.CURLOPT_PROTOCOLS, CurlProtocols.CURLPROTO_HTTP | CurlProtocols.CURLPROTO_HTTPS);
+                SetCurlOption(CURLoption.CURLOPT_PROTOCOLS, (long)(CurlProtocols.CURLPROTO_HTTP | CurlProtocols.CURLPROTO_HTTPS));
             }
 
             [Conditional(VerboseDebuggingConditional)]
@@ -173,10 +186,10 @@ namespace System.Net.Http
 
                 VerboseTrace(_handler._maxAutomaticRedirections.ToString());
                 SetCurlOption(CURLoption.CURLOPT_FOLLOWLOCATION, 1L);
-                long redirectProtocols = string.Equals(_requestMessage.RequestUri.Scheme, UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ?
+                CurlProtocols redirectProtocols = string.Equals(_requestMessage.RequestUri.Scheme, UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ?
                     CurlProtocols.CURLPROTO_HTTPS : // redirect only to another https
                     CurlProtocols.CURLPROTO_HTTP | CurlProtocols.CURLPROTO_HTTPS; // redirect to http or to https
-                SetCurlOption(CURLoption.CURLOPT_REDIR_PROTOCOLS, redirectProtocols);
+                SetCurlOption(CURLoption.CURLOPT_REDIR_PROTOCOLS, (long)redirectProtocols);
 
                 SetCurlOption(CURLoption.CURLOPT_MAXREDIRS, _handler._maxAutomaticRedirections);
             }
@@ -205,6 +218,55 @@ namespace System.Net.Http
                         SetCurlOption(CURLoption.CURLOPT_COPYPOSTFIELDS, string.Empty);
                     }
                 }
+                else if (_requestMessage.Method == HttpMethod.Trace)
+                {
+                    SetCurlOption(CURLoption.CURLOPT_CUSTOMREQUEST, _requestMessage.Method.Method);
+                    SetCurlOption(CURLoption.CURLOPT_NOBODY, 1L);
+                }
+                else
+                {
+                    SetCurlOption(CURLoption.CURLOPT_CUSTOMREQUEST, _requestMessage.Method.Method);
+                    if (_requestMessage.Content != null)
+                    {
+                        SetCurlOption(CURLoption.CURLOPT_UPLOAD, 1L);
+                    }
+                }
+            }
+
+            private void SetVersion()
+            {
+                Version v = _requestMessage.Version;
+                if (v != null)
+                {
+                    // Try to use the requested version, if a known version was explicitly requested.
+                    // If an unknown version was requested, we simply use libcurl's default.
+                    var curlVersion =
+                        (v.Major == 1 && v.Minor == 1) ? Interop.Http.CurlHttpVersion.CURL_HTTP_VERSION_1_1 :
+                        (v.Major == 1 && v.Minor == 0) ? Interop.Http.CurlHttpVersion.CURL_HTTP_VERSION_1_0 :
+                        (v.Major == 2 && v.Minor == 0) ? Interop.Http.CurlHttpVersion.CURL_HTTP_VERSION_2_0 :
+                        Interop.Http.CurlHttpVersion.CURL_HTTP_VERSION_NONE;
+
+                    if (curlVersion != Interop.Http.CurlHttpVersion.CURL_HTTP_VERSION_NONE)
+                    {
+                        // Ask libcurl to use the specified version if possible.
+                        CURLcode c = Interop.Http.EasySetOptionLong(_easyHandle, CURLoption.CURLOPT_HTTP_VERSION, (long)curlVersion);
+                        if (c == CURLcode.CURLE_OK)
+                        {
+                            // Success.  The requested version will be used.
+                            VerboseTrace("Set HTTP version to " + v);
+                        }
+                        else if (c == CURLcode.CURLE_UNSUPPORTED_PROTOCOL)
+                        {
+                            // The requested version is unsupported.  Fall back to using the default version chosen by libcurl.
+                            VerboseTrace("Unsupported protocol.");
+                        }
+                        else
+                        {
+                            // Some other error. Fail.
+                            ThrowIfCURLEError(c);
+                        }
+                    }
+                }
             }
 
             private void SetDecompressionOptions()
@@ -222,7 +284,7 @@ namespace System.Net.Http
                     string encoding = (gzip && deflate) ? EncodingNameGzip + "," + EncodingNameDeflate :
                                        gzip ? EncodingNameGzip :
                                        EncodingNameDeflate;
-                    SetCurlOption(CURLoption.CURLOPT_ACCEPTENCODING, encoding);
+                    SetCurlOption(CURLoption.CURLOPT_ACCEPT_ENCODING, encoding);
                     VerboseTrace(encoding);
                 }
             }
@@ -236,7 +298,7 @@ namespace System.Net.Http
                     return;
                 }
 
-                if ((_handler._proxyPolicy == ProxyUsePolicy.UseDefaultProxy) || 
+                if ((_handler._proxyPolicy == ProxyUsePolicy.UseDefaultProxy) ||
                     (_handler.Proxy == null))
                 {
                     VerboseTrace("Default proxy");
@@ -259,12 +321,12 @@ namespace System.Net.Http
                     return;
                 }
 
-                SetCurlOption(CURLoption.CURLOPT_PROXYTYPE, CURLProxyType.CURLPROXY_HTTP);
+                SetCurlOption(CURLoption.CURLOPT_PROXYTYPE, (long)CURLProxyType.CURLPROXY_HTTP);
                 SetCurlOption(CURLoption.CURLOPT_PROXY, proxyUri.AbsoluteUri);
                 SetCurlOption(CURLoption.CURLOPT_PROXYPORT, proxyUri.Port);
                 VerboseTrace("Set proxy: " + proxyUri.ToString());
 
-                KeyValuePair<NetworkCredential, ulong> credentialScheme = GetCredentials(_handler.Proxy.Credentials, _requestMessage.RequestUri);
+                KeyValuePair<NetworkCredential, CURLAUTH> credentialScheme = GetCredentials(_handler.Proxy.Credentials, _requestMessage.RequestUri);
                 NetworkCredential credentials = credentialScheme.Key;
                 if (credentials != null)
                 {
@@ -281,7 +343,7 @@ namespace System.Net.Http
                 }
             }
 
-            internal void SetCredentialsOptions(KeyValuePair<NetworkCredential, ulong> credentialSchemePair)
+            internal void SetCredentialsOptions(KeyValuePair<NetworkCredential, CURLAUTH> credentialSchemePair)
             {
                 if (credentialSchemePair.Key == null)
                 {
@@ -290,13 +352,13 @@ namespace System.Net.Http
                 }
 
                 NetworkCredential credentials = credentialSchemePair.Key;
-                ulong authScheme = credentialSchemePair.Value;
+                CURLAUTH authScheme = credentialSchemePair.Value;
                 string userName = string.IsNullOrEmpty(credentials.Domain) ?
                     credentials.UserName :
                     string.Format("{0}\\{1}", credentials.Domain, credentials.UserName);
 
                 SetCurlOption(CURLoption.CURLOPT_USERNAME, userName);
-                SetCurlOption(CURLoption.CURLOPT_HTTPAUTH, authScheme);
+                SetCurlOption(CURLoption.CURLOPT_HTTPAUTH, (long)authScheme);
                 if (credentials.Password != null)
                 {
                     SetCurlOption(CURLoption.CURLOPT_PASSWORD, credentials.Password);
@@ -314,14 +376,14 @@ namespace System.Net.Http
                 }
 
                 string cookieValues = _handler.CookieContainer.GetCookieHeader(uri);
-                if (cookieValues != null)
+                if (!string.IsNullOrEmpty(cookieValues))
                 {
                     SetCurlOption(CURLoption.CURLOPT_COOKIE, cookieValues);
                     VerboseTrace("Set cookies");
                 }
             }
 
-            private void SetRequestHeaders()
+            internal void SetRequestHeaders()
             {
                 HttpContentHeaders contentHeaders = null;
                 if (_requestMessage.Content != null)
@@ -339,7 +401,7 @@ namespace System.Net.Http
                     contentHeaders = _requestMessage.Content.Headers;
                 }
 
-                var slist = new SafeCurlSlistHandle();
+                var slist = new SafeCurlSListHandle();
 
                 // Add request and content request headers
                 if (_requestMessage.Headers != null)
@@ -351,7 +413,7 @@ namespace System.Net.Http
                     AddRequestHeaders(contentHeaders, slist);
                     if (contentHeaders.ContentType == null)
                     {
-                        if (!Interop.libcurl.curl_slist_append(slist, NoContentType))
+                        if (!Interop.Http.SListAppend(slist, NoContentType))
                         {
                             throw CreateHttpRequestException();
                         }
@@ -360,10 +422,10 @@ namespace System.Net.Http
 
                 // Since libcurl always adds a Transfer-Encoding header, we need to explicitly block
                 // it if caller specifically does not want to set the header
-                if (_requestMessage.Headers.TransferEncodingChunked.HasValue && 
+                if (_requestMessage.Headers.TransferEncodingChunked.HasValue &&
                     !_requestMessage.Headers.TransferEncodingChunked.Value)
                 {
-                    if (!Interop.libcurl.curl_slist_append(slist, NoTransferEncoding))
+                    if (!Interop.Http.SListAppend(slist, NoTransferEncoding))
                     {
                         throw CreateHttpRequestException();
                     }
@@ -381,46 +443,110 @@ namespace System.Net.Http
                 }
             }
 
-            private static void AddRequestHeaders(HttpHeaders headers, SafeCurlSlistHandle handle)
+            private void SetSslOptions()
+            {
+                // SSL Options should be set regardless of the type of the original request,
+                // in case an http->https redirection occurs.
+                //
+                // While this does slow down the theoretical best path of the request the code
+                // to decide that we need to register the callback is more complicated than, and
+                // potentially more expensive than, just always setting the callback.
+                SslProvider.SetSslOptions(this, _handler.ClientCertificateOptions);
+            }
+
+            internal void SetCurlCallbacks(
+                IntPtr easyGCHandle,
+                ReadWriteCallback receiveHeadersCallback,
+                ReadWriteCallback sendCallback,
+                SeekCallback seekCallback,
+                ReadWriteCallback receiveBodyCallback)
+            {
+                if (_callbackHandle == null)
+                {
+                    _callbackHandle = new SafeCallbackHandle();
+                }
+
+                // Add callback for processing headers
+                Interop.Http.RegisterReadWriteCallback(
+                    _easyHandle,
+                    ReadWriteFunction.Header,
+                    receiveHeadersCallback,
+                    easyGCHandle,
+                    ref _callbackHandle);
+
+                // If we're sending data as part of the request, add callbacks for sending request data
+                if (_requestMessage.Content != null)
+                {
+                    Interop.Http.RegisterReadWriteCallback(
+                        _easyHandle,
+                        ReadWriteFunction.Read,
+                        sendCallback,
+                        easyGCHandle,
+                        ref _callbackHandle);
+
+                    Interop.Http.RegisterSeekCallback(
+                        _easyHandle,
+                        seekCallback,
+                        easyGCHandle,
+                        ref _callbackHandle);
+                }
+
+                // If we're expecting any data in response, add a callback for receiving body data
+                if (_requestMessage.Method != HttpMethod.Head)
+                {
+                    Interop.Http.RegisterReadWriteCallback(
+                        _easyHandle,
+                        ReadWriteFunction.Write,
+                        receiveBodyCallback,
+                        easyGCHandle,
+                        ref _callbackHandle);
+                }
+            }
+
+            internal CURLcode SetSslCtxCallback(SslCtxCallback callback, IntPtr userPointer)
+            {
+                if (_callbackHandle == null)
+                {
+                    _callbackHandle = new SafeCallbackHandle();
+                }
+
+                CURLcode result = Interop.Http.RegisterSslCtxCallback(_easyHandle, callback, userPointer, ref _callbackHandle);
+                return result;
+            }
+
+            private static void AddRequestHeaders(HttpHeaders headers, SafeCurlSListHandle handle)
             {
                 foreach (KeyValuePair<string, IEnumerable<string>> header in headers)
                 {
-                    string headerStr = header.Key + ": " + headers.GetHeaderString(header.Key);
-                    if (!Interop.libcurl.curl_slist_append(handle, headerStr))
+                    string headerValue = headers.GetHeaderString(header.Key);
+                    string headerKeyAndValue = string.IsNullOrEmpty(headerValue) ?
+                        header.Key + ";" : // semicolon used by libcurl to denote empty value that should be sent
+                        header.Key + ": " + headerValue;
+                    if (!Interop.Http.SListAppend(handle, headerKeyAndValue))
                     {
                         throw CreateHttpRequestException();
                     }
                 }
             }
 
-            internal void SetCurlOption(int option, string value)
+            internal void SetCurlOption(CURLoption option, string value)
             {
-                ThrowIfCURLEError(Interop.libcurl.curl_easy_setopt(_easyHandle, option, value));
+                ThrowIfCURLEError(Interop.Http.EasySetOptionString(_easyHandle, option, value));
             }
 
-            internal void SetCurlOption(int option, long value)
+            internal void SetCurlOption(CURLoption option, long value)
             {
-                ThrowIfCURLEError(Interop.libcurl.curl_easy_setopt(_easyHandle, option, value));
+                ThrowIfCURLEError(Interop.Http.EasySetOptionLong(_easyHandle, option, value));
             }
 
-            internal void SetCurlOption(int option, ulong value)
+            internal void SetCurlOption(CURLoption option, IntPtr value)
             {
-                ThrowIfCURLEError(Interop.libcurl.curl_easy_setopt(_easyHandle, option, value));
+                ThrowIfCURLEError(Interop.Http.EasySetOptionPointer(_easyHandle, option, value));
             }
 
-            internal void SetCurlOption(int option, IntPtr value)
+            internal void SetCurlOption(CURLoption option, SafeHandle value)
             {
-                ThrowIfCURLEError(Interop.libcurl.curl_easy_setopt(_easyHandle, option, value));
-            }
-
-            internal void SetCurlOption(int option, Delegate value)
-            {
-                ThrowIfCURLEError(Interop.libcurl.curl_easy_setopt(_easyHandle, option, value));
-            }
-
-            internal void SetCurlOption(int option, SafeHandle value)
-            {
-                ThrowIfCURLEError(Interop.libcurl.curl_easy_setopt(_easyHandle, option, value));
+                ThrowIfCURLEError(Interop.Http.EasySetOptionPointer(_easyHandle, option, value));
             }
 
             internal sealed class SendTransferState

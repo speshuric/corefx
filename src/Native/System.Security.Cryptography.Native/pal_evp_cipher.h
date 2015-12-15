@@ -14,7 +14,7 @@ Implemented by:
 
 Returns new EVP_CIPHER_CTX on success, nullptr on failure.
 */
-extern "C" EVP_CIPHER_CTX* EvpCipherCreate(const EVP_CIPHER* type, unsigned char* key, unsigned char* iv, int32_t enc);
+extern "C" EVP_CIPHER_CTX* EvpCipherCreate(const EVP_CIPHER* type, uint8_t* key, unsigned char* iv, int32_t enc);
 
 /*
 Cleans up and deletes an EVP_CIPHER_CTX instance created by EvpCipherCreate.
@@ -51,8 +51,7 @@ EvpCipherUpdate
 
 Direct shim to EVP_CipherUpdate.
 */
-extern "C" int32_t
-EvpCipherUpdate(EVP_CIPHER_CTX* ctx, unsigned char* out, int32_t* outl, unsigned char* in, int32_t inl);
+extern "C" int32_t EvpCipherUpdate(EVP_CIPHER_CTX* ctx, uint8_t* out, int32_t* outl, unsigned char* in, int32_t inl);
 
 /*
 Function:
@@ -60,7 +59,7 @@ EvpCipherFinalEx
 
 Direct shim to EVP_CipherFinal_ex.
 */
-extern "C" int32_t EvpCipherFinalEx(EVP_CIPHER_CTX* ctx, unsigned char* outm, int32_t* outl);
+extern "C" int32_t EvpCipherFinalEx(EVP_CIPHER_CTX* ctx, uint8_t* outm, int32_t* outl);
 
 /*
 Function:
@@ -109,3 +108,19 @@ EvpAes256Cbc
 Direct shim to EVP_aes_256_cbc.
 */
 extern "C" const EVP_CIPHER* EvpAes256Cbc();
+
+/*
+Function:
+EvpDes3Ecb
+
+Direct shim to EVP_des_ede3.
+*/
+extern "C" const EVP_CIPHER* EvpDes3Ecb();
+
+/*
+Function:
+EvpDes3Cbc
+
+Direct shim to EVP_des_ede3_cbc.
+*/
+extern "C" const EVP_CIPHER* EvpDes3Cbc();

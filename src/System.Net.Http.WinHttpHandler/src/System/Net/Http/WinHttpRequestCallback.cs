@@ -27,10 +27,11 @@ namespace System.Net.Http
             IntPtr statusInformation,
             uint statusInformationLength)
         {
-            bool invokeCallback = false;
+            WinHttpTraceHelper.TraceCallbackStatus("WinHttpCallback", handle, context, internetStatus);
 
             if (Environment.HasShutdownStarted)
             {
+                WinHttpTraceHelper.Trace("WinHttpCallback: Environment.HasShutdownStarted returned True");
                 return;
             }
 
@@ -40,20 +41,9 @@ namespace System.Net.Http
             }
 
             WinHttpRequestState state = WinHttpRequestState.FromIntPtr(context);
-            if (state != null && 
-                state.RequestHandle != null &&
-                !state.RequestHandle.IsInvalid &&
-                state.RequestHandle.DangerousGetHandle() == handle)
-            {
-                invokeCallback = true;
-            }
+            Debug.Assert(state != null, "WinHttpCallback must have a non-null state object");
 
-            WinHttpTraceHelper.TraceCallbackStatus("WinHttpCallback", handle, invokeCallback, internetStatus);
-
-            if (invokeCallback)
-            {
-                RequestCallback(handle, state, internetStatus, statusInformation, statusInformationLength);
-            }
+            RequestCallback(handle, state, internetStatus, statusInformation, statusInformationLength);
         }
         
         private static void RequestCallback(
@@ -67,18 +57,28 @@ namespace System.Net.Http
             {
                 switch (internetStatus)
                 {
+                    case Interop.WinHttp.WINHTTP_CALLBACK_STATUS_HANDLE_CLOSING:
+                        OnRequestHandleClosing(state);
+                        return;
+
                     case Interop.WinHttp.WINHTTP_CALLBACK_STATUS_SENDREQUEST_COMPLETE:
                         OnRequestSendRequestComplete(state);
                         return;
-                        
+
+                    case Interop.WinHttp.WINHTTP_CALLBACK_STATUS_DATA_AVAILABLE:
+                        Debug.Assert(statusInformationLength == Marshal.SizeOf<int>());
+                        int bytesAvailable = Marshal.ReadInt32(statusInformation);
+                        OnRequestDataAvailable(state, bytesAvailable);
+                        return;
+
                     case Interop.WinHttp.WINHTTP_CALLBACK_STATUS_READ_COMPLETE:
                         OnRequestReadComplete(state, statusInformationLength);
                         return;
-                        
+
                     case Interop.WinHttp.WINHTTP_CALLBACK_STATUS_WRITE_COMPLETE:
                         OnRequestWriteComplete(state);
                         return;
-                        
+
                     case Interop.WinHttp.WINHTTP_CALLBACK_STATUS_HEADERS_AVAILABLE:
                         OnRequestReceiveResponseHeadersComplete(state);
                         return;
@@ -114,6 +114,16 @@ namespace System.Net.Http
             }
         }
 
+        private static void OnRequestHandleClosing(WinHttpRequestState state)
+        {
+            Debug.Assert(state != null, "OnRequestSendRequestComplete: state is null");
+            
+            // This is the last notification callback that WinHTTP will send. Therefore, we can
+            // now explicitly dispose the state object which will free its corresponding GCHandle.
+            // This will then allow the state object to be garbage collected.
+            state.Dispose();
+        }
+
         private static void OnRequestSendRequestComplete(WinHttpRequestState state)
         {
             Debug.Assert(state != null, "OnRequestSendRequestComplete: state is null");
@@ -121,6 +131,15 @@ namespace System.Net.Http
             Debug.Assert(!state.TcsSendRequest.Task.IsCompleted, "OnRequestSendRequestComplete: TcsSendRequest.Task is completed");
             
             state.TcsSendRequest.TrySetResult(true);
+        }
+
+        private static void OnRequestDataAvailable(WinHttpRequestState state, int bytesAvailable)
+        {
+            Debug.Assert(state != null, "OnRequestDataAvailable: state is null");
+            Debug.Assert(state.TcsQueryDataAvailable != null, "TcsQueryDataAvailable is null");
+            Debug.Assert(!state.TcsQueryDataAvailable.Task.IsCompleted, "TcsQueryDataAvailable.Task is completed");
+
+            state.TcsQueryDataAvailable.TrySetResult(bytesAvailable);
         }
 
         private static void OnRequestReadComplete(WinHttpRequestState state, uint bytesRead)
@@ -319,6 +338,21 @@ namespace System.Net.Http
                     else
                     {
                         state.TcsReceiveResponseHeaders.TrySetException(innerException);
+                    }
+                    break;
+
+                case Interop.WinHttp.API_QUERY_DATA_AVAILABLE:
+                    if (asyncResult.dwError == Interop.WinHttp.ERROR_WINHTTP_OPERATION_CANCELLED)
+                    {
+                        // TODO: Issue #2165. We need to pass in the cancellation token from the
+                        // user's ReadAsync() call into the TrySetCanceled().
+                        Debug.WriteLine("RequestCallback: QUERY_DATA_AVAILABLE - ERROR_WINHTTP_OPERATION_CANCELLED");
+                        state.TcsQueryDataAvailable.TrySetCanceled();
+                    }
+                    else
+                    {
+                        state.TcsQueryDataAvailable.TrySetException(
+                            new IOException(SR.net_http_io_read, innerException));
                     }
                     break;
 

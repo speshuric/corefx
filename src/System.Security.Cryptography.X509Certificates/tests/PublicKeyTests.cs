@@ -144,7 +144,6 @@ namespace System.Security.Cryptography.X509Certificates.Tests
         }
 
         [Fact]
-        [ActiveIssue(3769, PlatformID.AnyUnix)]
         public static void TestECDsaPublicKey_ValidatesSignature()
         {
             // This signature was produced as the output of ECDsaCng.SignData with the same key
@@ -180,6 +179,20 @@ namespace System.Security.Cryptography.X509Certificates.Tests
 
                 bool isSignatureValid = publicKey.VerifyData(helloBytes, existingSignature, HashAlgorithmName.SHA256);
                 Assert.True(isSignatureValid, "isSignatureValid");
+            }
+        }
+
+        [Fact]
+        public static void TestECDsaPublicKey_NonSignatureCert()
+        {
+            using (var cert = new X509Certificate2(TestData.EccCert_KeyAgreement))
+            using (ECDsa publicKey = cert.GetECDsaPublicKey())
+            {
+                // It is an Elliptic Curve Cryptography public key.
+                Assert.Equal("1.2.840.10045.2.1", cert.PublicKey.Oid.Value);
+
+                // But, due to KeyUsage, it shouldn't be used for ECDSA.
+                Assert.Null(publicKey);
             }
         }
 

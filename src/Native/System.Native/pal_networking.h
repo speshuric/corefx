@@ -42,6 +42,8 @@ enum GetHostErrorCodes
     PAL_NO_RECOVERY = 3,
     PAL_NO_DATA = 4,
     PAL_NO_ADDRESS = PAL_NO_DATA,
+    PAL_BAD_ARG = 5,
+    PAL_NO_MEM = 6,
 };
 
 /**
@@ -79,8 +81,10 @@ enum SocketType : int32_t
  */
 enum ProtocolType : int32_t
 {
-    PAL_PT_TCP = 6,  // System.Net.ProtocolType.Tcp
-    PAL_PT_UDP = 17, // System.Net.ProtocolType.Udp
+    PAL_PT_ICMP = 1,        // System.Net.ProtocolType.Icmp
+    PAL_PT_TCP = 6,         // System.Net.ProtocolType.Tcp
+    PAL_PT_UDP = 17,        // System.Net.ProtocolType.Udp
+    PAL_PT_ICMPV6 = 58,     // System.Net.ProtocolType.IcmpV6
 };
 
 enum MulticastOption : int32_t
@@ -133,8 +137,8 @@ enum SocketOptionName : int32_t
     // PAL_SO_USELOOPBACK = 0x0040,
     PAL_SO_LINGER = 0x0080,
     PAL_SO_OOBINLINE = 0x0100,
-    //PAL_SO_DONTLINGER = ~PAL_SO_LINGER,
-    //PAL_SO_EXCLUSIVEADDRUSE = ~PAL_SO_REUSEADDR,
+    // PAL_SO_DONTLINGER = ~PAL_SO_LINGER,
+    // PAL_SO_EXCLUSIVEADDRUSE = ~PAL_SO_REUSEADDR,
     PAL_SO_SNDBUF = 0x1001,
     PAL_SO_RCVBUF = 0x1002,
     PAL_SO_SNDLOWAT = 0x1003,
@@ -226,10 +230,11 @@ struct IPAddress
 
 struct HostEntry
 {
-    uint8_t* CanonicalName;  // Canonical Name of the Host
+    uint8_t* CanonicalName;  // Canonical name of the host
+    uint8_t** Aliases;       // List of aliases for the host
     void* AddressListHandle; // Handle for host socket addresses
     int32_t IPAddressCount;  // Number of IP end points in the list
-    int32_t Padding;         // Pad out to 8-byte alignment
+    int32_t HandleType;      // Indicates the type of the handle. Opaque to managed code.
 };
 
 struct IPPacketInformation
@@ -278,24 +283,11 @@ struct MessageHeader
     int32_t ControlBufferLen;
     int32_t Flags;
 };
-
-// FdSet constants.
-enum
-{
-    PAL_FDSET_MAX_FDS = 1024,
-    PAL_FDSET_NFD_BITS = 8 * sizeof(uint32_t)
-};
-
-struct FdSet
-{
-    uint32_t Bits[PAL_FDSET_MAX_FDS / PAL_FDSET_NFD_BITS];
-};
-
 struct SocketEvent
 {
-    uintptr_t Data;           // User data for this event
+    uintptr_t Data;      // User data for this event
     SocketEvents Events; // Event flags
-    uint32_t Padding;         // Pad out to 8-byte alignment
+    uint32_t Padding;    // Pad out to 8-byte alignment
 };
 
 /**
@@ -315,7 +307,11 @@ extern "C" int32_t IPAddressToString(const uint8_t* address,
 
 extern "C" int32_t GetHostEntryForName(const uint8_t* address, HostEntry* entry);
 
-extern "C" int32_t GetNextIPAddress(void** addressListHandle, IPAddress* endPoint);
+extern "C" int32_t GetHostByName(const uint8_t* hostname, HostEntry* entry);
+
+extern "C" int32_t GetHostByAddress(const IPAddress* address, HostEntry* entry);
+
+extern "C" int32_t GetNextIPAddress(const HostEntry* entry, void** addressListHandle, IPAddress* endPoint);
 
 extern "C" void FreeHostEntry(HostEntry* entry);
 
@@ -327,6 +323,8 @@ extern "C" int32_t GetNameInfo(const uint8_t* address,
                                uint8_t* service,
                                int32_t serviceLength,
                                int32_t flags);
+
+extern "C" int32_t GetDomainName(uint8_t* name, int32_t nameLength);
 
 extern "C" int32_t GetHostName(uint8_t* name, int32_t nameLength);
 
@@ -384,13 +382,18 @@ extern "C" Error Shutdown(int32_t socket, int32_t socketShutdown);
 
 extern "C" Error GetSocketErrorOption(int32_t socket, Error* error);
 
-extern "C" Error GetSockOpt(int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t* optionLen);
+extern "C" Error GetSockOpt(
+    int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t* optionLen);
 
-extern "C" Error SetSockOpt(int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t optionLen);
+extern "C" Error SetSockOpt(
+    int32_t socket, int32_t socketOptionLevel, int32_t socketOptionName, uint8_t* optionValue, int32_t optionLen);
 
 extern "C" Error Socket(int32_t addressFamily, int32_t socketType, int32_t protocolType, int32_t* createdSocket);
 
-extern "C" Error Select(int32_t fdCount, FdSet* readFdSet, FdSet* writeFdSet, FdSet* errorFdSet, int32_t microseconds, int32_t* selected);
+extern "C" int32_t FdSetSize();
+
+extern "C" Error Select(
+    int32_t fdCount, uint32_t* readFdSet, uint32_t* writeFdSet, uint32_t* errorFdSet, int32_t microseconds, int32_t* selected);
 
 extern "C" Error GetBytesAvailable(int32_t socket, int32_t* available);
 
@@ -402,7 +405,8 @@ extern "C" Error CreateSocketEventBuffer(int32_t count, SocketEvent** buffer);
 
 extern "C" Error FreeSocketEventBuffer(SocketEvent* buffer);
 
-extern "C" Error TryChangeSocketEventRegistration(int32_t port, int32_t socket, int32_t currentEvents, int32_t newEvents, uintptr_t data);
+extern "C" Error TryChangeSocketEventRegistration(
+    int32_t port, int32_t socket, int32_t currentEvents, int32_t newEvents, uintptr_t data);
 
 extern "C" Error WaitForSocketEvents(int32_t port, SocketEvent* buffer, int32_t* count);
 

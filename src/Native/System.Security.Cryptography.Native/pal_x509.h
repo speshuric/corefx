@@ -60,6 +60,8 @@ enum X509VerifyStatusCode : int32_t
     PAL_X509_V_ERR_NO_EXPLICIT_POLICY = 43,
 };
 
+typedef int32_t (*X509StoreVerifyCallback)(int32_t, X509_STORE_CTX*);
+
 /*
 Function:
 GetX509EvpPublicKey
@@ -71,12 +73,12 @@ extern "C" EVP_PKEY* GetX509EvpPublicKey(X509* x509);
 /*
 Shims the d2i_X509_CRL method and makes it easier to invoke from managed code.
 */
-extern "C" X509_CRL* DecodeX509Crl(const unsigned char* buf, int32_t len);
+extern "C" X509_CRL* DecodeX509Crl(const uint8_t* buf, int32_t len);
 
 /*
 Shims the d2i_X509 method and makes it easier to invoke from managed code.
 */
-extern "C" X509* DecodeX509(const unsigned char* buf, int32_t len);
+extern "C" X509* DecodeX509(const uint8_t* buf, int32_t len);
 
 /*
 Returns the number of bytes it will take to convert
@@ -230,6 +232,16 @@ Shims the X509_STORE_CTX_get1_chain method.
 extern "C" X509Stack* X509StoreCtxGetChain(X509_STORE_CTX* ctx);
 
 /*
+Returns the interior pointer to the "untrusted" certificates collection for this X509_STORE_CTX
+*/
+extern "C" X509Stack* X509StoreCtxGetSharedUntrusted(X509_STORE_CTX* ctx);
+
+/*
+Returns the interior pointer to the target certificate for an X509 certificate chain
+*/
+extern "C" X509* X509StoreCtxGetTargetCert(X509_STORE_CTX* ctx);
+
+/*
 Shims the X509_STORE_CTX_get_error method.
 */
 extern "C" X509VerifyStatusCode X509StoreCtxGetError(X509_STORE_CTX* ctx);
@@ -238,6 +250,11 @@ extern "C" X509VerifyStatusCode X509StoreCtxGetError(X509_STORE_CTX* ctx);
 Shims the X509_STORE_CTX_get_error_depth method.
 */
 extern "C" int32_t X509StoreCtxGetErrorDepth(X509_STORE_CTX* ctx);
+
+/*
+Shims the X509_STORE_CTX_set_verify_cb function.
+*/
+extern "C" void X509StoreCtxSetVerifyCallback(X509_STORE_CTX* ctx, X509StoreVerifyCallback callback);
 
 /*
 Shims the X509_verify_cert_error_string method.

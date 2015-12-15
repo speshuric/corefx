@@ -55,7 +55,7 @@ extern "C" EVP_PKEY* GetX509EvpPublicKey(X509* x509)
     return X509_PUBKEY_get(X509_get_X509_PUBKEY(x509));
 }
 
-extern "C" X509_CRL* DecodeX509Crl(const unsigned char* buf, int32_t len)
+extern "C" X509_CRL* DecodeX509Crl(const uint8_t* buf, int32_t len)
 {
     if (!buf || !len)
     {
@@ -65,7 +65,7 @@ extern "C" X509_CRL* DecodeX509Crl(const unsigned char* buf, int32_t len)
     return d2i_X509_CRL(nullptr, &buf, len);
 }
 
-extern "C" X509* DecodeX509(const unsigned char* buf, int32_t len)
+extern "C" X509* DecodeX509(const uint8_t* buf, int32_t len)
 {
     if (!buf || !len)
     {
@@ -221,9 +221,24 @@ extern "C" X509Stack* X509StoreCtxGetChain(X509_STORE_CTX* ctx)
     return X509_STORE_CTX_get1_chain(ctx);
 }
 
+extern "C" X509Stack* X509StoreCtxGetSharedUntrusted(X509_STORE_CTX* ctx)
+{
+    return ctx ? ctx->untrusted : nullptr;
+}
+
+extern "C" X509* X509StoreCtxGetTargetCert(X509_STORE_CTX* ctx)
+{
+    return ctx ? ctx->cert : nullptr;
+}
+
 extern "C" X509VerifyStatusCode X509StoreCtxGetError(X509_STORE_CTX* ctx)
 {
     return static_cast<X509VerifyStatusCode>(X509_STORE_CTX_get_error(ctx));
+}
+
+extern "C" void X509StoreCtxSetVerifyCallback(X509_STORE_CTX* ctx, X509StoreVerifyCallback callback)
+{
+    X509_STORE_CTX_set_verify_cb(ctx, callback);
 }
 
 extern "C" int32_t X509StoreCtxGetErrorDepth(X509_STORE_CTX* ctx)

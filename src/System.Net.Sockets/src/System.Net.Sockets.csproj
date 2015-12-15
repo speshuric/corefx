@@ -6,12 +6,20 @@
     <OutputType>Library</OutputType>
     <ProjectGuid>{43311AFB-D7C4-4E5A-B1DE-855407F90D1B}</ProjectGuid>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefineConstants>$(DefineConstants);FEATURE_CORECLR</DefineConstants>
-    <PackageTargetFramework>dotnet5.5</PackageTargetFramework>
-    <PackageTargetRuntime Condition="'$(TargetsWindows)' == 'true'">win7</PackageTargetRuntime>
-    <PackageTargetRuntime Condition="'$(TargetsLinux)' == 'true'">linux</PackageTargetRuntime>
-    <PackageTargetRuntime Condition="'$(TargetsOSX)' == 'true'">osx.10.10</PackageTargetRuntime>
+    <PackageTargetFramework>dotnet5.4</PackageTargetFramework>
+    <PackageTargetFramework Condition="'$(TargetsWindows)' == 'true' AND '$(EnableWinRT)' == 'true'">netcore50</PackageTargetFramework>
+    <PackageTargetRuntime Condition=" '$(TargetsWindows)' == 'true'">win7</PackageTargetRuntime>
+    <PackageTargetRuntime Condition=" '$(TargetsUnix)' == 'true'">unix</PackageTargetRuntime>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnableWinRT)' != 'true'">
+    <DefineConstants>$(DefineConstants);FEATURE_CORECLR</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(EnableWinRT)' == 'true'">
+    <DefineConstants>$(DefineConstants);NETNATIVE</DefineConstants>
+  </PropertyGroup>
+
   <!-- Help VS understand available configurations -->
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Linux_Debug|AnyCPU' " />
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Linux_Release|AnyCPU' " />
@@ -42,25 +50,24 @@
     <Compile Include="System\Net\Sockets\SocketAsyncEventArgs.cs" />
     <Compile Include="System\Net\Sockets\SocketAsyncOperation.cs" />
     <Compile Include="System\Net\Sockets\SocketFlags.cs" />
-    <Compile Include="System\Net\Sockets\SocketInformation.cs" />
-    <Compile Include="System\Net\Sockets\SocketInformationOptions.cs" />
     <Compile Include="System\Net\Sockets\SocketOptionLevel.cs" />
     <Compile Include="System\Net\Sockets\SocketOptionName.cs" />
+    <Compile Include="System\Net\Sockets\SocketReceiveFromResult.cs" />
+    <Compile Include="System\Net\Sockets\SocketReceiveMessageFromResult.cs" />
     <Compile Include="System\Net\Sockets\SocketShutdown.cs" />
+    <Compile Include="System\Net\Sockets\SocketTaskExtensions.cs" />
     <Compile Include="System\Net\Sockets\TCPClient.cs" />
     <Compile Include="System\Net\Sockets\TCPListener.cs" />
-    <Compile Include="System\Net\Sockets\TransmitFileFlags.cs" />
+    <Compile Include="System\Net\Sockets\TransportType.cs" />
     <Compile Include="System\Net\Sockets\UDPClient.cs" />
     <Compile Include="System\Net\Sockets\UdpReceiveResult.cs" />
-    <Compile Include="System\Net\Sockets\_AcceptOverlappedAsyncResult.cs" />
-    <Compile Include="System\Net\Sockets\_BaseOverlappedAsyncResult.cs" />
-    <Compile Include="System\Net\Sockets\_ConnectOverlappedAsyncResult.cs" />
-    <Compile Include="System\Net\Sockets\_DisconnectOverlappedAsyncResult.cs" />
-    <Compile Include="System\Net\Sockets\_MultipleConnectAsync.cs" />
-    <Compile Include="System\Net\Sockets\_OverlappedAsyncResult.cs" />
-    <Compile Include="System\Net\Sockets\_ReceiveMessageOverlappedAsyncResult.cs" />
-    <Compile Include="System\Net\Sockets\TransportType.cs" />
-    
+    <Compile Include="System\Net\Sockets\AcceptOverlappedAsyncResult.cs" />
+    <Compile Include="System\Net\Sockets\BaseOverlappedAsyncResult.cs" />
+    <Compile Include="System\Net\Sockets\ConnectOverlappedAsyncResult.cs" />
+    <Compile Include="System\Net\Sockets\MultipleConnectAsync.cs" />
+    <Compile Include="System\Net\Sockets\OverlappedAsyncResult.cs" />
+    <Compile Include="System\Net\Sockets\ReceiveMessageOverlappedAsyncResult.cs" />
+        
     <!-- Logging -->
     <Compile Include="$(CommonPath)\System\Net\Shims\TraceSource.cs">
       <Link>Common\System\Net\Shims\TraceSource.cs</Link>
@@ -87,11 +94,11 @@
     </Compile>
 
     <!-- System.Net common -->
-    <Compile Include="$(CommonPath)\System\Net\_ContextAwareResult.cs">
-      <Link>Common\System\Net\_ContextAwareResult.cs</Link>
+    <Compile Include="$(CommonPath)\System\Net\ContextAwareResult.cs">
+      <Link>Common\System\Net\ContextAwareResult.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\System\Net\_LazyAsyncResult.cs">
-      <Link>Common\System\Net\_LazyAsyncResult.cs</Link>
+    <Compile Include="$(CommonPath)\System\Net\LazyAsyncResult.cs">
+      <Link>Common\System\Net\LazyAsyncResult.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\System\Net\Shims\ExecutionContext.cs">
       <Link>Common\System\Net\Shims\ExecutionContext.cs</Link>
@@ -167,12 +174,12 @@
   </ItemGroup>
 
   <ItemGroup Condition=" '$(TargetsWindows)' == 'true' ">
-    <Compile Include="System\Net\Sockets\_AcceptOverlappedAsyncResult.Windows.cs" />
-    <Compile Include="System\Net\Sockets\_BaseOverlappedAsyncResult.Windows.cs" />
-    <Compile Include="System\Net\Sockets\_ConnectOverlappedAsyncResult.Windows.cs" />
-    <Compile Include="System\Net\Sockets\_OverlappedAsyncResult.Windows.cs" />
-    <Compile Include="System\Net\Sockets\_DynamicWinsockMethods.cs" />
-    <Compile Include="System\Net\Sockets\_ReceiveMessageOverlappedAsyncResult.Windows.cs" />
+    <Compile Include="System\Net\Sockets\AcceptOverlappedAsyncResult.Windows.cs" />
+    <Compile Include="System\Net\Sockets\BaseOverlappedAsyncResult.Windows.cs" />
+    <Compile Include="System\Net\Sockets\ConnectOverlappedAsyncResult.Windows.cs" />
+    <Compile Include="System\Net\Sockets\OverlappedAsyncResult.Windows.cs" />
+    <Compile Include="System\Net\Sockets\DynamicWinsockMethods.cs" />
+    <Compile Include="System\Net\Sockets\ReceiveMessageOverlappedAsyncResult.Windows.cs" />
     <Compile Include="System\Net\Sockets\SendPacketsElementFlags.Windows.cs" />
     <Compile Include="System\Net\Sockets\Socket.Windows.cs" />
     <Compile Include="System\Net\Sockets\SocketAsyncEventArgs.Windows.cs" />
@@ -191,15 +198,6 @@
     <!-- Interop -->
     <Compile Include="$(CommonPath)\Interop\Windows\Interop.Libraries.cs">
       <Link>Interop\Windows\Interop.Libraries.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Windows\mincore_obsolete\Interop.LocalAlloc_SafeOverlappedFree.cs">
-      <Link>Interop\Windows\mincore_obsolete\Interop.LocalAlloc_SafeOverlappedFree.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Windows\mincore_obsolete\Interop.LocalAlloc.Constants.cs">
-      <Link>Common\Interop\Windows\mincore_obsolete\Interop.LocalAlloc.Constants.cs</Link>
-    </Compile>
-    <Compile Include="$(CommonPath)\Interop\Windows\mincore_obsolete\Interop.LocalFree.cs" >
-      <Link>Common\Interop\Windows\mincore_obsolete\Interop.LocalFree.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Windows\Winsock\Interop.accept.cs">
       <Link>Interop\Windows\Winsock\Interop.accept.cs</Link>
@@ -291,20 +289,38 @@
     <Compile Include="$(CommonPath)\Interop\Windows\Winsock\SafeNativeOverlapped.cs">
       <Link>Interop\Windows\Winsock\SafeNativeOverlapped.cs</Link>
     </Compile>    
-    <Compile Include="$(CommonPath)\Interop\Windows\Winsock\SafeOverlappedFree.cs">
-      <Link>Interop\Windows\Winsock\SafeOverlappedFree.cs</Link>
-    </Compile>    
     <Compile Include="$(CommonPath)\Interop\Windows\Winsock\WSABuffer.cs">
       <Link>Interop\Windows\Winsock\WSABuffer.cs</Link>
     </Compile>
   </ItemGroup>
 
+  <!-- Windows : Win32 only -->
+  <ItemGroup Condition="'$(TargetsWindows)' == 'true' AND '$(EnableWinRT)' != 'true'">
+    <Compile Include="$(CommonPath)\Interop\Windows\Winsock\SafeOverlappedFree.cs">
+      <Link>Interop\Windows\Winsock\SafeOverlappedFree.cs</Link>
+    </Compile>    
+    
+    <Compile Include="$(CommonPath)\Interop\Windows\mincore_obsolete\Interop.LocalAlloc_SafeOverlappedFree.cs">
+      <Link>Interop\Windows\mincore_obsolete\Interop.LocalAlloc_SafeOverlappedFree.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Windows\mincore_obsolete\Interop.LocalAlloc.Constants.cs">
+      <Link>Common\Interop\Windows\mincore_obsolete\Interop.LocalAlloc.Constants.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Windows\mincore_obsolete\Interop.LocalFree.cs" >
+      <Link>Common\Interop\Windows\mincore_obsolete\Interop.LocalFree.cs</Link>
+    </Compile>
+  </ItemGroup>
+  
+  <!-- Windows : Win32 + WinRT -->
+  <ItemGroup Condition="'$(TargetsWindows)' == 'true' AND '$(EnableWinRT)' == 'true'">
+  </ItemGroup>
+  
   <ItemGroup Condition=" '$(TargetsUnix)' == 'true' ">
-    <Compile Include="System\Net\Sockets\_AcceptOverlappedAsyncResult.Unix.cs" />
-    <Compile Include="System\Net\Sockets\_BaseOverlappedAsyncResult.Unix.cs" />
-    <Compile Include="System\Net\Sockets\_ConnectOverlappedAsyncResult.Unix.cs" />
-    <Compile Include="System\Net\Sockets\_OverlappedAsyncResult.Unix.cs" />
-    <Compile Include="System\Net\Sockets\_ReceiveMessageOverlappedAsyncResult.Unix.cs" />
+    <Compile Include="System\Net\Sockets\AcceptOverlappedAsyncResult.Unix.cs" />
+    <Compile Include="System\Net\Sockets\BaseOverlappedAsyncResult.Unix.cs" />
+    <Compile Include="System\Net\Sockets\ConnectOverlappedAsyncResult.Unix.cs" />
+    <Compile Include="System\Net\Sockets\OverlappedAsyncResult.Unix.cs" />
+    <Compile Include="System\Net\Sockets\ReceiveMessageOverlappedAsyncResult.Unix.cs" />
     <Compile Include="System\Net\Sockets\SendPacketsElementFlags.Unix.cs" />
     <Compile Include="System\Net\Sockets\Socket.Unix.cs" />
     <Compile Include="System\Net\Sockets\SocketAsyncContext.Unix.cs" />
@@ -379,6 +395,9 @@
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Listen.cs">
       <Link>Interop\Unix\System.Native\Interop.Listen.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.MemSet.cs">
+      <Link>Interop\Unix\System.Native\Interop.MemSet.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.MessageHeader.cs">
       <Link>Interop\Unix\System.Native\Interop.MessageHeader.cs</Link>

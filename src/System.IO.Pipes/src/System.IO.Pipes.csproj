@@ -23,7 +23,7 @@
   <!-- Compiled Source Files -->
   <ItemGroup>
     <Compile Include="Microsoft\Win32\SafeHandles\SafePipeHandle.cs" />
-    <Compile Include="System\IO\__Error.cs" />
+    <Compile Include="System\IO\Error.cs" />
     <Compile Include="System\IO\Pipes\AnonymousPipeClientStream.cs" />
     <Compile Include="System\IO\Pipes\AnonymousPipeServerStream.cs" />
     <Compile Include="System\IO\Pipes\PipeDirection.cs" />
@@ -158,8 +158,8 @@
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Close.cs">
       <Link>Common\Interop\Unix\Interop.Close.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Fcntl.cs">
-      <Link>Common\Interop\Unix\Interop.Fcntl.cs</Link>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Fcntl.Pipe.cs">
+      <Link>Common\Interop\Unix\Interop.Fcntl.Pipe.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.FLock.cs">
       <Link>Common\Interop\Unix\Interop.FLock.cs</Link>
@@ -176,6 +176,9 @@
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Open.cs">
       <Link>Common\Interop\Unix\Interop.Open.cs</Link>
     </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Open.Pipe.cs">
+      <Link>Common\Interop\Unix\Interop.Open.Pipe.cs</Link>
+    </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.OpenFlags.cs">
       <Link>Common\Interop\Unix\Interop.OpenFlags.cs</Link>
     </Compile>
@@ -188,17 +191,20 @@
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Poll.cs">
       <Link>Common\Interop\Unix\Interop.Poll.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Read.cs">
-      <Link>Common\Interop\Unix\Interop.Read.cs</Link>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Read.Pipe.cs">
+      <Link>Common\Interop\Unix\Interop.Read.Pipe.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Unlink.cs">
       <Link>Common\Interop\Unix\Interop.Unlink.cs</Link>
     </Compile>
-    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Write.cs">
-      <Link>Common\Interop\Unix\Interop.Write.cs</Link>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Write.Pipe.cs">
+      <Link>Common\Interop\Unix\Interop.Write.Pipe.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Stat.cs">
       <Link>Common\Interop\Unix\Interop.Stat.cs</Link>
+    </Compile>
+    <Compile Include="$(CommonPath)\Interop\Unix\System.Native\Interop.Stat.Pipe.cs">
+      <Link>Common\Interop\Unix\Interop.Stat.Pipe.cs</Link>
     </Compile>
     <Compile Include="$(CommonPath)\System\IO\PersistedFiles.Names.Unix.cs">
       <Link>Common\System\IO\PersistedFiles.Names.Unix.cs</Link>

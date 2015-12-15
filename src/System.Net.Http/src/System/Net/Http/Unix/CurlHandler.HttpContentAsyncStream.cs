@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Security.Cryptography.X509Certificates;
 
 namespace System.Net.Http
 {
@@ -37,6 +38,8 @@ namespace System.Net.Http
             private readonly object _syncObj = new object();
             /// <summary>The HttpContent to read from, potentially repeatedly until a response is received.</summary>
             private readonly HttpContent _content;
+            /// <summary>The transportContext of CurlHandler </summary>
+            private readonly CurlTransportContext _transportContext = new CurlTransportContext();
 
             /// <summary>true if the stream has been disposed; otherwise, false.</summary>
             private bool _disposed;
@@ -65,16 +68,23 @@ namespace System.Net.Http
                 _content = content;
             }
 
-            /// <summary>Gets whether the stream is readable.  It is, but it should only be read from by CurlHandler's libcurl callbacks.</summary>
-            public override bool CanRead { get { return true; } }
-
-            /// <summary>Gets whether the stream is writable.  It is, but it should only be written to by HttpContent.CopyToAsync.</summary>
+            /// <summary>Gets whether the stream is writable. It is.</summary>
             public override bool CanWrite { get { return true; } }
+
+            /// <summary>Gets whether the stream is readable.  It's not (at least not through the public Read* methods).</summary>
+            public override bool CanRead { get { return false; } }
             
             /// <summary>Gets whether the stream is seekable. It's not.</summary>
             public override bool CanSeek { get { return false; } }
 
-            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            /// <summary>
+            /// Reads asynchronously from the data written to the stream.  Since this stream is exposed out
+            /// as an argument to HttpContent.CopyToAsync, and since we don't want that code attempting to read
+            /// from this stream (which will mess with consumption by libcurl's callbacks), we mark the stream
+            /// as CanRead==false and throw NotSupportedExceptions from the public Read* methods, with internal
+            /// usage using this ReadAsyncInternal method instead.
+            /// </summary>
+            internal Task<int> ReadAsyncInternal(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             {
                 // If no data was requested, give back 0 bytes.
                 if (count == 0)
@@ -142,6 +152,15 @@ namespace System.Net.Http
                 }
             }
 
+            public override void Write(byte[] buffer, int offset, int count)
+            {
+                // WriteAsync should be how writes are performed on this stream as
+                // part of HttpContent.CopyToAsync.  However, we implement Write just
+                // in case someone does need to do a synchronous write or has existing
+                // code that does so.
+                WriteAsync(buffer, offset, count, CancellationToken.None).GetAwaiter().GetResult();
+            }
+
             public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
             {
                 // If no data was provided, we're done.
@@ -205,6 +224,15 @@ namespace System.Net.Http
                         return Task.CompletedTask;
                     }
                 }
+            }
+
+            public override void Flush() { }
+
+            public override Task FlushAsync(CancellationToken cancellationToken)
+            {
+                return cancellationToken.IsCancellationRequested ?
+                    Task.FromCanceled(cancellationToken) :
+                    Task.CompletedTask;
             }
 
             protected override void Dispose(bool disposing)
@@ -279,38 +307,28 @@ namespace System.Net.Http
                 Debug.Assert(!Monitor.IsEntered(_syncObj), "Should not be invoked while holding the lock");
                 Debug.Assert(_copyTask == null, "Should only be invoked after construction or a reset");
 
-                // Start the copy and store the task to represent it
-                _copyTask = StartCopyToAsync();
+                // Start the copy and store the task to represent it. In the rare case that the synchronous 
+                // call to CopyToAsync may block writing to this stream synchronously (e.g. if the 
+                // SerializeToStreamAsync called by CopyToAsync did a synchronous Write on this stream) we 
+                // need to ensure that doesn't cause a deadlock. So, we invoke CopyToAsync asynchronously. 
+                // This purposefully uses Task.Run this way rather than StartNew with object state because 
+                // the latter would need to use a separate call to Unwrap, which is more expensive than the 
+                // single extra delegate allocation (no closure allocation) we'll get here along with 
+                // Task.Run's very efficient unwrapping implementation.
+                _copyTask = Task.Run(() => _content.CopyToAsync(this, _transportContext));
 
                 // Fix up the instance when it's done
                 _copyTask.ContinueWith((t, s) => ((HttpContentAsyncStream)s).EndCopyToAsync(t), this,
                     CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             }
 
-            /// <summary>
-            /// Initiates a new CopyToAsync from the HttpContent to this stream, and should only be called when the caller
-            /// can be sure that no one else is accessing the stream or attempting to initiate a copy.
-            /// </summary>
-            private Task StartCopyToAsync()
+            /// <summary>  passes the channel binding token to the transport context </summary>
+            internal void SetChannelBindingToken(X509Certificate2 certificate)
             {
-                Debug.Assert(!Monitor.IsEntered(_syncObj), "Should not be invoked while holding the lock");
-                Debug.Assert(_copyTask == null, "Should only be invoked after construction or a reset");
-
-                // Transfer the data from the content to this stream
-                try
-                {
-                    VerboseTrace("Initiating new CopyToAsync");
-                    return _content.CopyToAsync(this);
-                }
-                catch (Exception exc)
-                {
-                    // CopyToAsync allows some exceptions to propagate synchronously, including exceptions
-                    // indicating that a stream can't be re-copied.
-                    return Task.FromException(exc);
-                }
+                _transportContext.CurlChannelBinding.SetToken(certificate);
             }
 
-            /// <summary>Completes a CopyToAsync; called only from StartCopyToAsync.</summary>
+            /// <summary>Completes a CopyToAsync initiated in Run.</summary>
             private void EndCopyToAsync(Task completedCopy)
             {
                 Debug.Assert(!Monitor.IsEntered(_syncObj), "Should not be invoked while holding the lock");
@@ -390,10 +408,17 @@ namespace System.Net.Http
                 set { throw new NotSupportedException(); }
             }
 
-            public override void Flush() { }
-
             public override int Read(byte[] buffer, int offset, int count)
             {
+                // Reading should only be performed by CurlHandler, and it should always do it with 
+                // ReadAsyncInternal, not Read or ReadAsync.
+                throw new NotSupportedException();
+            }
+
+            public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            {
+                // Reading should only be performed by CurlHandler, and it should always do it with 
+                // ReadAsyncInternal, not Read or ReadAsync.
                 throw new NotSupportedException();
             }
 
@@ -403,11 +428,6 @@ namespace System.Net.Http
             }
 
             public override void SetLength(long value)
-            {
-                throw new NotSupportedException();
-            }
-
-            public override void Write(byte[] buffer, int offset, int count)
             {
                 throw new NotSupportedException();
             }

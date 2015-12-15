@@ -2,17 +2,21 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 
 namespace System.Net.NetworkInformation
 {
     public class GatewayIPAddressInformationCollection : ICollection<GatewayIPAddressInformation>
     {
-        private readonly Collection<GatewayIPAddressInformation> _addresses = 
-            new Collection<GatewayIPAddressInformation>();
+        private readonly List<GatewayIPAddressInformation> _addresses;
 
         protected internal GatewayIPAddressInformationCollection()
         {
+            _addresses = new List<GatewayIPAddressInformation>();
+        }
+
+        internal GatewayIPAddressInformationCollection(List<GatewayIPAddressInformation> addresses)
+        {
+            _addresses = addresses;
         }
 
         public virtual void CopyTo(GatewayIPAddressInformation[] array, int offset)

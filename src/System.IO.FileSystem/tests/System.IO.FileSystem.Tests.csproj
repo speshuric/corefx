@@ -8,6 +8,7 @@
     <OutputType>Library</OutputType>
     <AssemblyName>System.IO.FileSystem.Tests</AssemblyName>
     <TestCategories>InnerLoop;OuterLoop</TestCategories>
+    <IncludePerformanceTests>true</IncludePerformanceTests>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
     <DebugSymbols>true</DebugSymbols>
@@ -35,7 +36,7 @@
       We also must reference System.Diagnostics.Debug due to this project reference and issue
       https://github.com/dotnet/corefx/issues/2817.
     -->
-    <ProjectReference Include="..\..\System.Runtime.Extensions\src\System.Runtime.Extensions.CoreCLR.csproj">
+    <ProjectReference Include="..\..\System.Runtime.Extensions\src\System.Runtime.Extensions.csproj">
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <OutputItemType>Content</OutputItemType>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -163,9 +164,7 @@
     <Compile Include="$(CommonTestPath)\System\IO\FileCleanupTestBase.cs">
       <Link>Common\System\IO\FileCleanupTestBase.cs</Link>
     </Compile>
-  </ItemGroup>
-  <!-- Performance Tests -->
-  <ItemGroup Condition="'$(RunPerfTestsForProject)' == 'true'">
+    <!-- Performance Tests -->
     <Compile Include="Performance\Perf.Directory.cs" />
     <Compile Include="Performance\Perf.File.cs" />
     <Compile Include="Performance\Perf.FileInfo.cs" />
