@@ -1550,6 +1550,11 @@ namespace System.Numerics
 
         public static BigInteger operator ^(BigInteger left, BigInteger right)
         {
+            if (left.IsZero)
+                return right;
+            if (right.IsZero)
+                return left;
+
             uint[] x = left.ToUInt32Array();
             uint[] y = right.ToUInt32Array();
             uint[] z = new uint[Math.Max(x.Length, y.Length)];
