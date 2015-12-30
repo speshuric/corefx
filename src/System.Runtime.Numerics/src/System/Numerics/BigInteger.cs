@@ -1613,7 +1613,7 @@ namespace System.Numerics
         public static BigInteger operator >>(BigInteger value, int shift)
         {
             if (shift == 0) return value;
-            else if (shift == Int32.MinValue) return ((value << Int32.MaxValue) << 1);
+            else if (shift == Int32.MinValue) return ((value << 1) << Int32.MaxValue);
             else if (shift < 0) return value << -shift;
 
             int digitShift = shift / kcbitUint;
