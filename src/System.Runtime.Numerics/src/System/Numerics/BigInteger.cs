@@ -1099,10 +1099,10 @@ namespace System.Numerics
 
             // measure the exact bit count
             int c = NumericsHelpers.CbitHighZero((uint)h);
-            long b = (long)value._bits.Length * 32 - c;
+            long b = (long)value._bits.Length * kcbitUint - c;
 
             // extract most significant bits
-            ulong x = (h << 32 + c) | (m << c) | (l >> 32 - c);
+            ulong x = (h << kcbitUint + c) | (m << c) | (l >> kcbitUint - c);
 
             // let v = value, b = bit count, x = v/2^b-64
             // log ( v/2^b-64 * 2^b-64 ) = log ( x ) + log ( 2^b-64 )
@@ -1168,8 +1168,8 @@ namespace System.Numerics
             {
                 uint[] tempBits = BigIntegerCalculator.Remainder(leftBits, rightBits);
 
-                ulong left = ((ulong)rightBits[1] << 32) | rightBits[0];
-                ulong right = ((ulong)tempBits[1] << 32) | tempBits[0];
+                ulong left = ((ulong)rightBits[1] << kcbitUint) | rightBits[0];
+                ulong right = ((ulong)tempBits[1] << kcbitUint) | tempBits[0];
 
                 return BigIntegerCalculator.Gcd(left, right);
             }
@@ -1481,8 +1481,8 @@ namespace System.Numerics
 
             int z = NumericsHelpers.CbitHighZero((uint)h);
 
-            int exp = (length - 2) * 32 - z;
-            ulong man = (h << 32 + z) | (m << z) | (l >> 32 - z);
+            int exp = (length - 2) * kcbitUint - z;
+            ulong man = (h << kcbitUint + z) | (m << z) | (l >> kcbitUint - z);
 
             return NumericsHelpers.GetDoubleFromParts(sign, exp, man);
         }
