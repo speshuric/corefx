@@ -1,11 +1,8 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="12.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$([MSBuild]::GetDirectoryNameOfFileAbove($(MSBuildThisFileDirectory), dir.props))\dir.props" />
   <PropertyGroup>
-    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
-    <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
     <ProjectGuid>{F3E433C8-352F-4944-BF7F-765CE435370D}</ProjectGuid>
-    <OutputType>Library</OutputType>
     <AssemblyName>System.Reflection.Metadata</AssemblyName>
     <DocumentationFile>$(OutputPath)System.Reflection.Metadata.xml</DocumentationFile>
     <RootNamespace>System.Reflection.Metadata</RootNamespace>
@@ -66,6 +63,17 @@
     <Compile Include="System\Reflection\Metadata\CustomAttribute.cs" />
     <Compile Include="System\Reflection\Metadata\CustomAttributeNamedArgumentKind.cs" />
     <Compile Include="System\Reflection\Metadata\DeclarativeSecurityAttribute.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\ArrayShape.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\ISZArrayTypeProvider.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\ISignatureTypeProvider.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\ITypeProvider.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\SignatureTypeHandleCode.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\IPrimitiveTypeProvider.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\IConstructedTypeProvider.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\SignatureDecoder.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\SignatureDecoderOptions.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\MethodSignature.cs" />
+    <Compile Include="System\Reflection\Metadata\Decoding\PrimitiveTypeCode.cs" />
     <Compile Include="System\Reflection\Metadata\Ecma335\EditAndContinueLogEntry.cs" />
     <Compile Include="System\Reflection\Metadata\Ecma335\EditAndContinueOperation.cs" />
     <Compile Include="System\Reflection\Metadata\Ecma335\ExportedTypeExtensions.cs" />
@@ -110,6 +118,7 @@
     <Compile Include="System\Reflection\Metadata\Internal\TypeOrMethodDefTag.cs" />
     <Compile Include="System\Reflection\Metadata\ManifestResource.cs" />
     <Compile Include="System\Reflection\Metadata\MemberReference.cs" />
+    <Compile Include="System\Reflection\Metadata\StandaloneSignatureKind.cs" />
     <Compile Include="System\Reflection\Metadata\MemberReferenceKind.cs" />
     <Compile Include="System\Reflection\Metadata\MetadataAggregator.cs" />
     <Compile Include="System\Reflection\Metadata\MetadataKind.cs" />
@@ -162,6 +171,9 @@
     <Compile Include="System\Reflection\PortableExecutable\CoffHeader.cs" />
     <Compile Include="System\Reflection\PortableExecutable\CorFlags.cs" />
     <Compile Include="System\Reflection\PortableExecutable\CorHeader.cs" />
+    <Compile Include="System\Reflection\PortableExecutable\DebugDirectory\CodeViewDebugDirectoryData.cs" />
+    <Compile Include="System\Reflection\PortableExecutable\DebugDirectory\DebugDirectoryEntry.cs" />
+    <Compile Include="System\Reflection\PortableExecutable\DebugDirectory\DebugDirectoryEntryType.cs" />
     <Compile Include="System\Reflection\PortableExecutable\DirectoryEntry.cs" />
     <Compile Include="System\Reflection\PortableExecutable\Machine.cs" />
     <Compile Include="System\Reflection\PortableExecutable\PEBinaryReader.cs" />

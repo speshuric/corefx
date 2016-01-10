@@ -174,6 +174,9 @@
   <data name="Cryptography_Unix_X509_MachineStoresRootOnly" xml:space="preserve">
     <value>Unix LocalMachine X509Store is limited to the Root and CertificateAuthority stores.</value>
   </data>
+  <data name="Cryptography_Unix_X509_PropertyNotSettable" xml:space="preserve">
+      <value>The {0} value cannot be set on Unix.</value>
+  </data>
   <data name="Cryptography_Unix_X509_SerializedExport" xml:space="preserve">
     <value>X509ContentType.SerializedCert and X509ContentType.SerializedStore are not supported on Unix.</value>
   </data>
@@ -240,9 +243,6 @@
   <data name="Unknown_Error" xml:space="preserve">
     <value>Unknown error.</value>
   </data>
-  <data name="WorkInProgress" xml:space="preserve">
-    <value>WorkInProgress.</value>
-  </data>
   <data name="Cryptography_FileStatusError" xml:space="preserve">
     <value>Unable to get file status.</value>
   </data>
@@ -257,5 +257,11 @@
   </data>
   <data name="Cryptography_TooBroadFilePermissions" xml:space="preserve">
     <value>Invalid file permissions. The file '{0}' must not be readable or writable by anyone other than the owner.</value>
+  </data>
+  <data name="Cryptography_Invalid_X500Name" xml:space="preserve">
+    <value>The string contains an invalid X500 name attribute key, oid, value or delimiter.</value>
+  </data>
+  <data name="Cryptography_Invalid_IA5String" xml:space="preserve">
+    <value>The string contains a character not in the 7 bit ASCII character set.</value>
   </data>
 </root>

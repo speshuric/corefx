@@ -63,6 +63,7 @@ namespace System.Net
             _totalRead = 0;
             StartReading();
         }
+
         //
         // Loops while subsequent completions are sync.
         //
@@ -103,7 +104,10 @@ namespace System.Net
                 throw new IOException(SR.net_io_eof);
             }
 
-            GlobalLog.Assert(_totalRead + bytes <= _request.Count, "FixedSizeReader::CheckCompletion()|State got out of range. Total:{0} Count:{1}", _totalRead + bytes, _request.Count);
+            if (GlobalLog.IsEnabled && _totalRead + bytes > _request.Count)
+            {
+                GlobalLog.AssertFormat("FixedSizeReader::CheckCompletion()|State got out of range. Total:{0} Count:{1}", _totalRead + bytes, _request.Count);
+            }
 
             if ((_totalRead += bytes) == _request.Count)
             {
@@ -116,7 +120,11 @@ namespace System.Net
 
         private static void ReadCallback(IAsyncResult transportResult)
         {
-            GlobalLog.Assert(transportResult.AsyncState is FixedSizeReader, "ReadCallback|State type is wrong, expected FixedSizeReader.");
+            if (GlobalLog.IsEnabled && !(transportResult.AsyncState is FixedSizeReader))
+            {
+                GlobalLog.Assert("ReadCallback|State type is wrong, expected FixedSizeReader.");
+            }
+
             if (transportResult.CompletedSynchronously)
             {
                 return;
