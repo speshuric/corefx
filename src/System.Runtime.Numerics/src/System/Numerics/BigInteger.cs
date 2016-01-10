@@ -114,7 +114,13 @@ namespace System.Numerics
 
         public int Sign
         {
-            get { AssertValid(); return (_sign >> (kcbitUint - 1)) - (-_sign >> (kcbitUint - 1)); }
+            get
+            {
+                // This hack doesn't work with _sign == Int32.MinValue, but this case is forbidden
+                const int shiftToHighestBit = kcbitUint - 1;
+                AssertValid();
+                return (_sign >> (shiftToHighestBit)) - (-_sign >> (shiftToHighestBit));
+            }
         }
 
         #endregion public properties
