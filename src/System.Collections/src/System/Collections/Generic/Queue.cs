@@ -266,7 +266,6 @@ namespace System.Collections.Generic
         // Returns true if the queue contains at least one object equal to item.
         // Equality is determined using item.Equals().
         //
-        // Exceptions: ArgumentNullException if item == null.
         /// <include file='doc\Queue.uex' path='docs/doc[@for="Queue.Contains"]/*' />
         public bool Contains(T item)
         {
@@ -276,12 +275,7 @@ namespace System.Collections.Generic
             EqualityComparer<T> c = EqualityComparer<T>.Default;
             while (count-- > 0)
             {
-                if (((Object)item) == null)
-                {
-                    if (((Object)_array[index]) == null)
-                        return true;
-                }
-                else if (_array[index] != null && c.Equals(_array[index], item))
+                if (c.Equals(_array[index], item))
                 {
                     return true;
                 }
@@ -303,9 +297,12 @@ namespace System.Collections.Generic
         /// <include file='doc\Queue.uex' path='docs/doc[@for="Queue.ToArray"]/*' />
         public T[] ToArray()
         {
-            T[] arr = new T[_size];
             if (_size == 0)
-                return arr; // consider replacing with Array.Empty<T>() to be consistent with non-generic Queue
+            {
+                return Array.Empty<T>();
+            }
+
+            T[] arr = new T[_size];
             
             if (_head < _tail)
             {
